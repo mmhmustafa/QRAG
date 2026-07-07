@@ -151,6 +151,15 @@ def analyze_evidence(context):
     if counts["conflicting"]:consistency=.3
     else:consistency=round(min(.98,.9+.04*counts["supporting"]),2)
     return {"primary":primary,"roles":roles,"counts":counts,"conflicting_documents":sorted(set(conflicts)),"superseded_documents":sorted(set(superseded)),"consistency":consistency,"relevant_count":len(relevant)}
+VERIFY_PROMOTION_MIN=.55  # borderline band: below this the evidence is too weak to promote even with model verification
+def llm_supports_answer(llm,question,answer_text,context):
+    """Second verification pass for borderline answers: promote to Ready only when the model confirms full evidentiary support."""
+    evidence="\n\n".join(x["content"] for x in context)
+    try:
+        verdict=llm.chat([{"role":"system","content":"You verify that an answer is grounded in evidence. Reply with exactly YES or NO."},{"role":"user","content":f"Question: {question}\n\nAnswer: {answer_text}\n\nEvidence:\n{evidence}\n\nIs the answer fully supported by the evidence, with no invented facts? Reply YES or NO."}])
+        return str(verdict).strip().lower().startswith("yes")
+    except Exception:
+        logger.exception("llm_verification_failed question=%r",question[:80]);return False
 def verify_answer(answer_text,question,relevant_context,primary,llm=None,use_llm=False):
     """Generate-then-verify: check the drafted answer against relevant evidence instead of vetoing on chunk pairs."""
     contradictions=[];question_subject=question_terms(question)
@@ -231,6 +240,12 @@ def generate_one(db,q,cfg,llm,on_stage=None):
     elif stale_golden:confidence=round(min(1,.5*stale_golden["similarity"]+.3),2)
     elif relevant:confidence=round(min(1,.55*retrieval_quality+.3*evidence_consistency+.15*authority_factor+.03*supporting),2)
     else:confidence=0
+    # Borderline answers with reliable evidence get a second model pass; only a confirmed YES promotes them to Ready.
+    llm_verified=False
+    if (not preferred and not stale_golden and not contradictions and relevant and answer_text!=MANUAL
+            and VERIFY_PROMOTION_MIN<=confidence<.7 and top_score>=RELIABLE_SCORE and cfg.llm_provider!="mock"):
+        stage("verifying");llm_verified=llm_supports_answer(llm,q.text,answer_text,generation_ctx)
+        if llm_verified:logger.info("llm_verification_promoted customer=%s question=%s confidence=%s",q.customer_id,q.id,confidence)
     stage("saving")
     answer=existing
     if preferred:status="approved_candidate";reason=("Golden Answer reused — validated against current documentation." if preferred["golden"] else "Previously approved answer reused — evidence verified as current.")
@@ -238,10 +253,10 @@ def generate_one(db,q,cfg,llm,on_stage=None):
     elif not relevant:status="manual_review";reason="No relevant documentation found in this product scope."
     elif answer_text==MANUAL:status="manual_review";reason="Current documentation does not support a grounded answer."
     elif contradictions:status="manual_review";reason=f"Documentation disagrees: {primary['document']} vs {', '.join(contradictions)} — reviewer decision required. Draft answer retained from {primary['document']}."
-    elif confidence>=.7 and top_score>=RELIABLE_SCORE:status="approved_candidate";reason=provenance
+    elif (confidence>=.7 or llm_verified) and top_score>=RELIABLE_SCORE:status="approved_candidate";reason=provenance+(" Verified against source documentation." if llm_verified else "")
     else:status="needs_review";reason=provenance+(" Confirm wording before approval." if provenance else "Reviewer verification recommended.")
     current_sources=sorted([{"document":x["document"],"document_id":x["document_id"],"category":x["category"],"collections":x.get("collections",[]),"authority":x.get("authority",DEFAULT_AUTHORITY),"role":roles.get(x.get("chunk_id"),"additional"),"page_number":x.get("page_number"),"chunk_id":x["chunk_id"],"score":round(x["score"],4),"text_preview":x["content"][:700]} for x in ctx],key=lambda x:(ROLE_ORDER.get(x["role"],9),-x["score"]));sources=current_sources if preferred and preferred["global_approved"] else (preferred["evidence"] if preferred else current_sources)
-    values={"text":answer_text,"confidence":confidence,"status":status,"sources":sources,"classification_reason":reason,"reused_from_answer_id":preferred["answer_id"] if preferred else (stale_golden["answer_id"] if stale_golden else None),"category":sources[0]["category"] if sources else "General","collections":collections,"evidence_document_ids":sorted(set(x.get("document_id") for x in sources if x.get("document_id"))),"debug_data":{"prompt":prompt,"retrieved_chunks":sources,"llm_response":answer_text,"execution_time_ms":elapsed,"cache_hit":cache_hit,"conflicting_documents":contradictions,"superseded_documents":analysis["superseded_documents"],"evidence_analysis":{"counts":analysis["counts"],"consistency":analysis["consistency"],"relevant_count":analysis["relevant_count"],"primary_document":primary["document"] if primary else None},"retrieval_quality":retrieval_quality,"evidence_consistency":evidence_consistency,"answer_confidence":confidence,"authority_factor":authority_factor,"suggestions":suggestions}}
+    values={"text":answer_text,"confidence":confidence,"status":status,"sources":sources,"classification_reason":reason,"reused_from_answer_id":preferred["answer_id"] if preferred else (stale_golden["answer_id"] if stale_golden else None),"category":sources[0]["category"] if sources else "General","collections":collections,"evidence_document_ids":sorted(set(x.get("document_id") for x in sources if x.get("document_id"))),"debug_data":{"prompt":prompt,"retrieved_chunks":sources,"llm_response":answer_text,"execution_time_ms":elapsed,"cache_hit":cache_hit,"llm_verified":llm_verified,"conflicting_documents":contradictions,"superseded_documents":analysis["superseded_documents"],"evidence_analysis":{"counts":analysis["counts"],"consistency":analysis["consistency"],"relevant_count":analysis["relevant_count"],"primary_document":primary["document"] if primary else None},"retrieval_quality":retrieval_quality,"evidence_consistency":evidence_consistency,"answer_confidence":confidence,"authority_factor":authority_factor,"suggestions":suggestions}}
     if answer:
         for key,value in values.items():setattr(answer,key,value)
     else:answer=Answer(customer_id=q.customer_id,question_id=q.id,**values);db.add(answer)
