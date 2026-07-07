@@ -123,7 +123,11 @@ export default function Review({
     }, 2000);
     return () => clearInterval(timer);
   }, [tracking, customer, id]);
-  async function generate(onlyMissing = false, includeApproved = false) {
+  async function generate(
+    onlyMissing = false,
+    includeApproved = false,
+    questionIds?: number[],
+  ) {
     if (!customer) return;
     setGenerating(true);
     setNotice("");
@@ -131,7 +135,11 @@ export default function Review({
       await send(
         `/api/customers/${customer.id}/questionnaires/${id}/generate`,
         "POST",
-        { only_missing: onlyMissing, include_approved: includeApproved },
+        {
+          only_missing: onlyMissing,
+          include_approved: includeApproved,
+          question_ids: questionIds ?? null,
+        },
       );
     } catch (e: any) {
       if (!String(e?.message || "").includes("already running")) {
@@ -331,6 +339,27 @@ export default function Review({
         q.answer && !["approved", "rejected"].includes(q.answer.status),
     ),
     focusCard = focus ? pending[Math.min(focusIdx, pending.length - 1)] : null;
+  function generateVisible() {
+    const targets = visible.map((q: any) => q.id);
+    if (!targets.length) return;
+    const approvedInScope = visible.filter(
+      (q: any) => q.answer?.status === "approved",
+    ).length;
+    if (
+      approvedInScope > 0 &&
+      !confirm(
+        `The current filter includes ${approvedInScope} approved answer${approvedInScope !== 1 ? "s" : ""} — they will be replaced.\n\nGenerate ${targets.length} question${targets.length !== 1 ? "s" : ""}?`,
+      )
+    )
+      return;
+    void generate(false, false, targets);
+  }
+  function retryFailed() {
+    const failedIds = Object.entries(progress?.question_status || {})
+      .filter(([, status]) => status === "failed")
+      .map(([qid]) => Number(qid));
+    if (failedIds.length) void generate(false, false, failedIds);
+  }
   function confirmRegenerate(includeApproved = false) {
     if (includeApproved) {
       if (
@@ -414,7 +443,17 @@ export default function Review({
             <summary className="button secondary">Export ▾</summary>
             <div className="menu-list">
               <a
-                onClick={closeMenu}
+                onClick={(e) => {
+                  closeMenu(e);
+                  const blank = total - approved;
+                  if (
+                    blank > 0 &&
+                    !confirm(
+                      `${blank} of ${total} questions have no approved answer and will be blank in the customer copy.\n\nExport anyway?`,
+                    )
+                  )
+                    e.preventDefault();
+                }}
                 href={`${API}/api/customers/${customer?.id}/questionnaires/${id}/export`}
               >
                 Export customer copy
@@ -516,6 +555,23 @@ export default function Review({
           </button>
         </div>
       )}
+      {!tracking &&
+        progress?.failed_count > 0 &&
+        ["completed", "cancelled"].includes(progress?.state) && (
+          <div className="notice warning-notice">
+            <strong>
+              {progress.failed_count} question
+              {progress.failed_count !== 1 ? "s" : ""} failed in the last run.
+            </strong>{" "}
+            <button
+              className="mini"
+              disabled={generating}
+              onClick={retryFailed}
+            >
+              Retry failed questions
+            </button>
+          </div>
+        )}
       {!answered && !tracking && (
         <div className="card empty">
           <div className="empty-icon">✦</div>
@@ -559,6 +615,16 @@ export default function Review({
             </button>
           )}
           <span className="grow" />
+          {(statusFilter !== "all" || query) && visible.length > 0 && (
+            <button
+              className="secondary"
+              disabled={generating || tracking}
+              onClick={generateVisible}
+              title="Run generation only for the questions matching the current filter"
+            >
+              Generate These ({visible.length})
+            </button>
+          )}
           {ready > 0 && (
             <button onClick={() => bulk("approve_high")}>
               Approve All Ready ({ready})

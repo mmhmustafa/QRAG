@@ -74,3 +74,23 @@ def test_claims_conflict_requires_shared_negated_subject():
     assert claims_conflict("The platform supports MFA authentication.","The platform does not support MFA authentication.")
     assert not claims_conflict("Support operations are located in India.","Support staff do not have access to production data.")
     assert claims_conflict("The product is cloud-only.","The product is on-prem only.")
+
+class ConflictJudgeLLM(MockLLMProvider):
+    def __init__(self,verdict):self.verdict=verdict
+    def chat(self,messages,stream=False):
+        if "Reply with exactly YES or NO" in messages[0].get("content",""):return self.verdict
+        return super().chat(messages,stream)
+
+def test_llm_vetoes_false_lexical_conflict():
+    # Lexical screen suspects a conflict; the model precision filter clears it, so consistency is not punished.
+    context=[item(1,"Current Policy","The platform supports MFA authentication.",authority=4),item(2,"Legacy Policy","The platform does not support MFA authentication.",authority=4)]
+    cleared=analyze_evidence(context,llm=ConflictJudgeLLM("NO"),use_llm=True)
+    assert cleared["counts"]["conflicting"]==0
+    assert cleared["conflicting_documents"]==[]
+    assert cleared["consistency"]>=.9
+    confirmed=analyze_evidence(context,llm=ConflictJudgeLLM("YES"),use_llm=True)
+    assert confirmed["counts"]["conflicting"]==1 and confirmed["consistency"]<=.35
+
+def test_lexical_behavior_unchanged_without_llm():
+    context=[item(1,"Current Policy","The platform supports MFA authentication.",authority=4),item(2,"Legacy Policy","The platform does not support MFA authentication.",authority=4)]
+    assert analyze_evidence(context)["counts"]["conflicting"]==1

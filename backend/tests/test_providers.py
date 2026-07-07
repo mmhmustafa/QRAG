@@ -47,3 +47,10 @@ def test_question_extraction_unnumbered_lines_still_work():
     text="Do you support MFA?\nInternal note without question form\nHow is data encrypted?"
     questions=MockLLMProvider().extract_questions(text)
     assert questions==["Do you support MFA?","How is data encrypted?"]
+
+def test_clean_customer_answer_strips_markdown():
+    from app.services import clean_customer_answer
+    raw="**Key governance bodies**\n- Executive board oversees `risk`.\n## Cadence\nMeetings are held monthly."
+    cleaned=clean_customer_answer(raw,[])
+    assert "**" not in cleaned and "`" not in cleaned and "##" not in cleaned
+    assert "Key governance bodies" in cleaned and "Meetings are held monthly." in cleaned

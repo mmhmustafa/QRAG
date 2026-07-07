@@ -89,6 +89,21 @@ def test_full_regeneration_keeps_approved_answers_by_default(tmp_path):
     db.refresh(first)
     assert first.status!="approved"  # explicit opt-in regenerates approved answers too
 
+def test_generation_scoped_to_explicit_question_ids(tmp_path):
+    """Filtered/retry generation: only the requested questions are processed, even approved ones."""
+    db,customer,item=make_workspace(tmp_path,["Do you encrypt data at rest?","Do you support MFA?","Is support available 24x7?"])
+    run_generation(db,item,new_progress(item.id,customer.id))
+    questions=list(db.scalars(select(Question).where(Question.questionnaire_id==item.id).order_by(Question.ordinal)))
+    target=questions[1]
+    other=db.scalar(select(Answer).where(Answer.question_id==questions[0].id))
+    other.status="approved";other.text="Untouched approved answer.";db.commit()
+    progress=new_progress(item.id,customer.id)
+    run_generation(db,item,progress,question_ids=[target.id])
+    assert progress["total"]==1 and progress["completed"]==1
+    assert list(progress["question_status"].keys())==[target.id]
+    db.refresh(other)
+    assert other.text=="Untouched approved answer."  # out-of-scope answers are never touched
+
 def test_one_failed_question_does_not_stop_the_rest(tmp_path,monkeypatch):
     db,customer,item=make_workspace(tmp_path,["Do you encrypt data at rest?","Do you support MFA?","Is support available 24x7?"])
     class ExplodingLLM(MockLLMProvider):

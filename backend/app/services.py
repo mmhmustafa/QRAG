@@ -13,6 +13,9 @@ logger.setLevel(logging.INFO)
 def now():return datetime.now(timezone.utc).replace(tzinfo=None)
 def clean_customer_answer(text,context):
     clean=text.strip()
+    # Customer-ready answers are plain prose; strip markdown syntax that models emit despite instructions.
+    clean=re.sub(r"\*\*(.+?)\*\*",r"\1",clean,flags=re.S);clean=re.sub(r"(?m)^#{1,6}\s+","",clean);clean=clean.replace("`","")
+    clean=re.sub(r"(?m)^\s*[-*•]\s+","",clean)
     for item in context:clean=re.sub(re.escape(item["document"]),"",clean,flags=re.I)
     clean=re.sub(r"(?i)\b(?:source|document|chunk)\s*(?:id)?\s*[:#]?\s*\d+\b","",clean)
     clean=re.sub(r"(?i)\b(?:similarity|match)\s*(?:score)?\s*[:=]?\s*\d+(?:\.\d+)?%?","",clean)
@@ -125,7 +128,13 @@ def conflict_subjects(left_text,right_text):
     if len(denied_by_right)>=2 and denied_by_right-GENERIC_TERMS:subjects|=denied_by_right
     return subjects
 def claims_conflict(left_text,right_text):return bool(conflict_subjects(left_text,right_text))
-def analyze_evidence(context):
+def llm_confirms_conflict(llm,left_text,right_text):
+    """Precision filter: the lexical screen recalls candidate conflicts, the model confirms them. Fails closed."""
+    try:
+        verdict=llm.chat([{"role":"system","content":"You check factual consistency. Reply with exactly YES or NO."},{"role":"user","content":f"Statement A: {left_text}\n\nStatement B: {right_text}\n\nDo these statements make mutually incompatible factual claims about the same subject? Reply YES or NO."}])
+        return "yes" in str(verdict).strip().lower()[:5]
+    except Exception:return True
+def analyze_evidence(context,llm=None,use_llm=False):
     """Rank retrieved evidence around the most authoritative relevant source instead of treating all pairs as potential conflicts."""
     relevant=[x for x in context if x.get("score",1)>=RELEVANT_SCORE]
     counts={"supporting":0,"complementary":0,"conflicting":0,"superseded":0,"unrelated":0}
@@ -143,7 +152,9 @@ def analyze_evidence(context):
         item_terms=question_terms(item["content"].lower());shared=primary_terms&item_terms;similarity=len(shared)/max(1,len(primary_terms|item_terms))
         if claims_conflict(primary["content"],item["content"]):
             if item.get("authority",DEFAULT_AUTHORITY)-primary.get("authority",DEFAULT_AUTHORITY)>PEER_AUTHORITY_GAP:kind="superseded";superseded.append(item["document"])
-            else:kind="conflicting";conflicts.extend([primary["document"],item["document"]])
+            # A peer-authority conflict crashes the consistency score, so it must be confirmed, not just lexically suspected.
+            elif not use_llm or llm is None or llm_confirms_conflict(llm,primary["content"],item["content"]):kind="conflicting";conflicts.extend([primary["document"],item["document"]])
+            else:kind="complementary"
         elif similarity>=.68 or (len(item["content"])>40 and (item["content"].lower() in primary["content"].lower() or primary["content"].lower() in item["content"].lower())):kind="supporting"
         elif shared:kind="complementary"
         else:kind="unrelated"
@@ -171,14 +182,8 @@ def verify_answer(answer_text,question,relevant_context,primary,llm=None,use_llm
         if not subjects:continue
         # The contradiction must concern what the question actually asks; disagreements about side topics never block an answer.
         if EXCLUSIVE_SENTINEL not in subjects and not subjects&(question_subject-GENERIC_TERMS):continue
-        confirmed=True
-        if use_llm and llm is not None:
-            # Lexical screen is the recall filter; the LLM is the precision filter.
-            try:
-                verdict=llm.chat([{"role":"system","content":"You check factual consistency. Reply with exactly YES or NO."},{"role":"user","content":f"Statement A: {answer_text}\n\nStatement B: {chunk['content']}\n\nDo these statements make mutually incompatible factual claims about the same subject? Reply YES or NO."}])
-                confirmed="yes" in str(verdict).strip().lower()[:5]
-            except Exception:confirmed=True
-        if confirmed:contradictions.append(chunk["document"])
+        # Lexical screen is the recall filter; the LLM is the precision filter.
+        if not use_llm or llm is None or llm_confirms_conflict(llm,answer_text,chunk["content"]):contradictions.append(chunk["document"])
     return sorted(set(contradictions))
 def retrieve(db,q,cid,limit=None,collections=None):
     cfg=config_for(db,cid);v=get_embeddings(cfg).embed_text(q);limit=limit or cfg.top_k;selected=set(normalize_collections(collections)) if collections is not None else None;logger.info("retrieval_query customer=%s query=%r top_k=%s dimension=%s collections=%s",cid,q,limit,len(v),sorted(selected) if selected is not None else "all")
@@ -218,7 +223,7 @@ def generate_one(db,q,cfg,llm,on_stage=None):
     stage=(lambda name:on_stage(name)) if on_stage else (lambda name:None)
     questionnaire=db.get(Questionnaire,q.questionnaire_id);collections=normalize_collections(questionnaire.collections);cache_key=hashlib.sha256(f"rag-v5|{cfg.embedding_provider}|{cfg.embedding_model}|{cfg.top_k}|{sorted(collections)}|{q.text}".encode()).hexdigest();cache_hit=q.retrieval_cache_key==cache_key and bool(q.retrieval_cache);stage("retrieving");ctx=q.retrieval_cache if cache_hit else (retrieve(db,q.text,q.customer_id,collections=collections) if collections else [])
     if q.retrieval_cache_key!=cache_key:q.retrieval_cache=ctx;q.retrieval_cache_key=cache_key
-    analysis=analyze_evidence(ctx);primary=analysis["primary"];relevant=[x for x in ctx if x.get("score",1)>=RELEVANT_SCORE];roles=analysis["roles"];top_score=ctx[0]["score"] if ctx else 0
+    analysis=analyze_evidence(ctx,llm,use_llm=cfg.llm_provider!="mock");primary=analysis["primary"];relevant=[x for x in ctx if x.get("score",1)>=RELEVANT_SCORE];roles=analysis["roles"];top_score=ctx[0]["score"] if ctx else 0
     existing=db.scalar(select(Answer).where(Answer.question_id==q.id,Answer.customer_id==q.customer_id));suggestions=approved_suggestions(db,q.text,q.customer_id,collections,exclude_answer_id=existing.id if existing else None)
     # Golden/approved reuse is validated against current documentation; a golden match with changed evidence is surfaced for review, never silently reused.
     validated=lambda x:x["evidence_current"] and (not (x["golden"] or x["global_approved"]) or bool(relevant and top_score>=RELIABLE_SCORE))
@@ -272,26 +277,29 @@ def request_generation_cancel(qid):
     progress=GENERATION_PROGRESS.get(qid)
     if not progress or progress["state"]!="running":return False
     progress["cancel"]=True;return True
-def start_generation(qid,cid,only_missing=False,include_approved=False):
+def start_generation(qid,cid,only_missing=False,include_approved=False,question_ids=None):
     with GENERATION_LOCK:
         current=GENERATION_PROGRESS.get(qid)
         if current and current["state"]=="running":return None
         progress=new_progress(qid,cid);GENERATION_PROGRESS[qid]=progress
-    threading.Thread(target=_generation_worker,args=(qid,cid,progress,only_missing,include_approved),daemon=True).start();return progress
-def _generation_worker(qid,cid,progress,only_missing=False,include_approved=False):
+    threading.Thread(target=_generation_worker,args=(qid,cid,progress,only_missing,include_approved,question_ids),daemon=True).start();return progress
+def _generation_worker(qid,cid,progress,only_missing=False,include_approved=False,question_ids=None):
     from .db import SessionLocal
     try:
         with SessionLocal() as db:
             item=db.get(Questionnaire,qid)
             if not item or item.customer_id!=cid:raise RuntimeError("Questionnaire not found")
-            run_generation(db,item,progress,only_missing=only_missing,include_approved=include_approved)
+            run_generation(db,item,progress,only_missing=only_missing,include_approved=include_approved,question_ids=question_ids)
     except Exception as exc:
         progress.update(state="failed",error=str(exc),finished_ts=time.time(),finished_at=now().isoformat());logger.exception("generation_worker_failed questionnaire=%s",qid)
-def run_generation(db,item,progress,on_question_complete=None,only_missing=False,include_approved=False):
+def run_generation(db,item,progress,on_question_complete=None,only_missing=False,include_approved=False,question_ids=None):
     """Generate every answer with per-question commits so completed work survives cancellation or a crash."""
     cfg=config_for(db,item.customer_id);llm=get_llm(cfg)
     questions=list(db.scalars(select(Question).where(Question.customer_id==item.customer_id,Question.questionnaire_id==item.id).order_by(Question.ordinal)))
-    if only_missing and questions:
+    if question_ids is not None:
+        # Explicit scope (filtered/retry/selected questions) overrides the derived filters; the caller chose deliberately.
+        wanted=set(question_ids);questions=[q for q in questions if q.id in wanted]
+    elif only_missing and questions:
         answered=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.question_id.in_([q.id for q in questions]))))
         questions=[q for q in questions if q.id not in answered]
     elif questions and not include_approved:
