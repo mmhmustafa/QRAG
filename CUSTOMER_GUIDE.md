@@ -52,15 +52,29 @@ Keys are stored locally and never shown again in the interface.
 
 #### Using your local enterprise LLM
 
-If your organization runs its own LLM gateway (any OpenAI-compatible endpoint), configure it like this:
+If your organization runs its own LLM gateway (any OpenAI-compatible endpoint — vLLM, LiteLLM, Ollama, internal proxies), first collect these six answers from your IT/platform team:
 
-1. Set **AI Provider** to `enterprise`. An extra **Local / Custom Enterprise Provider** section appears.
-2. Enter your gateway's **AI Base URL** (e.g. `https://llm.company.local/v1`) — required, there is no default.
-3. Enter the **Chat Model** name exactly as your gateway expects it (no model discovery is needed).
-4. If your gateway requires a token, paste it as the AI API Key — it is sent as `Authorization: Bearer <token>`. If it requires extra headers (organization IDs, routing), add them as **Custom Headers (JSON)**, e.g. `{"X-Org": "prod"}` — they are sent on every chat and embedding request.
-5. For embeddings, set **Embedding Provider** to `enterprise` (or `custom` — they are the same) with your gateway's embedding base URL and model, or keep a separate embedding provider — chat and embeddings are configured independently.
-6. If your gateway does not use OpenAI's response format, switch **OpenAI-compatible mode** off; common `response`/`output`/`text` envelopes are then accepted. The endpoint paths (default `/chat/completions` and `/embeddings`) are also adjustable.
-7. Click **Test AI Connection** and **Test Embedding Connection** before saving — both must show Connected.
+1. What is the **base URL** of the gateway's OpenAI-compatible API? (usually ends in `/v1`)
+2. What is the exact **chat model name** the gateway accepts? (copy it exactly — names are case-sensitive)
+3. What is the exact **embedding model name**, and is it served from the same base URL?
+4. Is an **API token** required, and does it expire? (an expired token later shows up as failed generations)
+5. Are any **extra HTTP headers** required (team IDs, routing, cost-center tags)?
+6. Is the API **OpenAI-compatible**? (it almost always is; only homegrown gateways with a custom response format answer no)
+
+Then fill Settings with the answers — both providers set to `enterprise`:
+
+| IT's answer | Where it goes in Settings |
+|---|---|
+| Base URL (1) | **AI Base URL**, and **Embedding Base URL** (they may differ if IT says so) |
+| Chat model name (2) | **Chat Model** — exactly as given |
+| Embedding model name (3) | **Embedding Model** — exactly as given |
+| Token (4) | **AI API Key** / **Embedding API Key** (sent as `Authorization: Bearer <token>`); leave empty if none required |
+| Extra headers (5) | **Custom Headers (JSON)**, e.g. `{"X-Team-Id": "compliance"}` — sent on every request |
+| Not OpenAI-compatible (6) | Switch **OpenAI-compatible mode** off and set the **Chat/Embedding Endpoint Paths** IT provides; otherwise leave mode on and paths at their defaults |
+
+Also raise **Timeout** to 120 if the models are self-hosted — shared GPUs can be slow on long answers.
+
+Finish with **Test AI Connection** and **Test Embedding Connection** — both must show Connected before you save. If a test fails: 401/403 means the token or header is wrong; a model-not-found error means the model name doesn't match the gateway's registry; connection refused is a network/VPN issue.
 
 Everything stays inside your network: with an enterprise gateway configured, the application makes no external calls at all. Question extraction from uploaded questionnaires is deterministic and never calls the LLM.
 
