@@ -16,3 +16,4 @@ deliverables/
 *.db-journal
 *.db-wal
 *.db-shm
+customer copy/
