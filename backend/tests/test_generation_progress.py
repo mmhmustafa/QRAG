@@ -73,6 +73,22 @@ def test_regeneration_with_approved_suggestions_stores_debug_data(tmp_path):
     assert progress["failed_count"]==0,progress["question_errors"]
     assert progress["state"]=="completed"
 
+def test_full_regeneration_keeps_approved_answers_by_default(tmp_path):
+    db,customer,item=make_workspace(tmp_path,["Do you encrypt data at rest?","Do you support MFA?"])
+    run_generation(db,item,new_progress(item.id,customer.id))
+    first=db.scalar(select(Answer).where(Answer.customer_id==customer.id).order_by(Answer.id))
+    first.status="approved";first.text="Reviewed final wording.";first.approved_at=services.now();db.commit()
+    progress=new_progress(item.id,customer.id)
+    run_generation(db,item,progress)
+    assert progress["total"]==1  # the approved answer was skipped
+    db.refresh(first)
+    assert first.status=="approved" and first.text=="Reviewed final wording."
+    explicit=new_progress(item.id,customer.id)
+    run_generation(db,item,explicit,include_approved=True)
+    assert explicit["total"]==2
+    db.refresh(first)
+    assert first.status!="approved"  # explicit opt-in regenerates approved answers too
+
 def test_one_failed_question_does_not_stop_the_rest(tmp_path,monkeypatch):
     db,customer,item=make_workspace(tmp_path,["Do you encrypt data at rest?","Do you support MFA?","Is support available 24x7?"])
     class ExplodingLLM(MockLLMProvider):

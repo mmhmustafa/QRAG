@@ -234,7 +234,7 @@ def preview_document(cid:int,did:int,chunk_id:int|None=None,db:Session=Depends(g
 async def upload_questionnaire(cid:int,file:UploadFile=File(...),collections:str=Form(""),db:Session=Depends(get_db)):
     customer_or_404(db,cid);selected=parse_collections(collections)
     if not selected:raise HTTPException(400,"Select at least one Knowledge Collection to search")
-    safe_name=Path(file.filename or "questionnaire").name;folder=settings.upload_dir/str(cid)/"questionnaires";folder.mkdir(parents=True,exist_ok=True);path=folder/f"{uuid4().hex}_{safe_name}";path.write_bytes(await file.read());item=build_questionnaire(db,path,safe_name,cid,selected);return {"id":item.id,"name":item.name,"question_count":len(item.questions),"collections":item.collections}
+    safe_name=Path(file.filename or "questionnaire").name;folder=settings.upload_dir/str(cid)/"questionnaires";folder.mkdir(parents=True,exist_ok=True);path=folder/f"{uuid4().hex}_{safe_name}";path.write_bytes(await file.read());item=build_questionnaire(db,path,safe_name,cid,selected);return {"id":item.id,"name":item.name,"question_count":len(item.questions),"detected_questions":getattr(item,"detected_question_count",0),"collections":item.collections}
 @app.get("/api/customers/{cid}/questionnaires")
 def questionnaires(cid:int,db:Session=Depends(get_db)):
     customer_or_404(db,cid);items=[]
@@ -251,11 +251,11 @@ def progress_dict(progress):
     elapsed=round((progress.get("finished_ts") or time.time())-progress["started_ts"],1)
     eta=round(elapsed/completed*remaining) if completed and remaining and progress["state"]=="running" else None
     return {"state":progress["state"],"stage":progress["stage"],"stage_label":GENERATION_STAGES.get(progress["stage"],progress["stage"]),"total":total,"completed":completed,"remaining":remaining,"percent":round(100*completed/total) if total else 0,"failed_count":progress["failed_count"],"current_ordinal":progress["current_ordinal"],"current_question":progress["current_question"],"current_question_id":progress["current_question_id"],"question_status":progress["question_status"],"question_errors":progress["question_errors"],"summary":progress["summary"],"error":progress["error"],"elapsed_seconds":elapsed,"eta_seconds":eta,"started_at":progress["started_at"],"finished_at":progress["finished_at"]}
-class GenerateBody(BaseModel):only_missing:bool=False
+class GenerateBody(BaseModel):only_missing:bool=False;include_approved:bool=False
 @app.post("/api/customers/{cid}/questionnaires/{qid}/generate")
 def generate_answers(cid:int,qid:int,body:GenerateBody|None=None,db:Session=Depends(get_db)):
     item=scoped(db,Questionnaire,qid,cid);total=db.scalar(select(func.count(Question.id)).where(Question.questionnaire_id==qid))
-    progress=start_generation(item.id,cid,only_missing=bool(body and body.only_missing))
+    progress=start_generation(item.id,cid,only_missing=bool(body and body.only_missing),include_approved=bool(body and body.include_approved))
     if progress is None:raise HTTPException(409,"Generation is already running for this questionnaire")
     return {"started":True,"total":total,"only_missing":bool(body and body.only_missing)}
 @app.get("/api/customers/{cid}/questionnaires/{qid}/generation")

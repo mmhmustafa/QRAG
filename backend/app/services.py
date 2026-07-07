@@ -191,12 +191,19 @@ def retrieve(db,q,cid,limit=None,collections=None):
         results.append(candidate);seen.add(candidate["document_id"])
         if len(results)>=limit:break
     logger.info("retrieval_results customer=%s count=%s scores=%s",cid,len(results),[round(x["score"],4) for x in results]);return results
+def detect_numbered_questions(text):
+    """Distinct explicit Q-number markers in the source; used to warn when extraction loses questions."""
+    return len(set(re.findall(r"(?im)^\s*q\s?(\d{1,4})[.):]",text)))
 def build_questionnaire(db,path,name,cid,collections=None):
     cfg=config_for(db,cid);text=parse_file(path);llm=get_llm(cfg);qs=llm.extract_questions(text) or [x.strip() for x in text.splitlines() if x.strip()][:1000]
+    detected=detect_numbered_questions(text)
     item=Questionnaire(customer_id=cid,name=name,path=str(path),collections=normalize_collections(collections));db.add(item);db.flush()
     for i,qtext in enumerate(qs):
         db.add(Question(customer_id=cid,questionnaire_id=item.id,text=qtext,ordinal=i))
-    db.add(AuditLog(customer_id=cid,action="questionnaire_upload",entity_type="questionnaire",entity_id=item.id,details={"name":name,"questions":len(qs)}));db.commit();return item
+    if detected>len(qs):logger.warning("question_extraction_mismatch customer=%s questionnaire=%s detected=%s extracted=%s",cid,item.id,detected,len(qs))
+    db.add(AuditLog(customer_id=cid,action="questionnaire_upload",entity_type="questionnaire",entity_id=item.id,details={"name":name,"questions":len(qs),"numbered_detected":detected}));db.commit()
+    item.detected_question_count=detected
+    return item
 ROLE_ORDER={"primary":0,"supporting":1,"complementary":2,"conflicting":3,"superseded":4,"unrelated":5,"additional":6}
 def generate_one(db,q,cfg,llm,on_stage=None):
     stage=(lambda name:on_stage(name)) if on_stage else (lambda name:None)
@@ -250,28 +257,32 @@ def request_generation_cancel(qid):
     progress=GENERATION_PROGRESS.get(qid)
     if not progress or progress["state"]!="running":return False
     progress["cancel"]=True;return True
-def start_generation(qid,cid,only_missing=False):
+def start_generation(qid,cid,only_missing=False,include_approved=False):
     with GENERATION_LOCK:
         current=GENERATION_PROGRESS.get(qid)
         if current and current["state"]=="running":return None
         progress=new_progress(qid,cid);GENERATION_PROGRESS[qid]=progress
-    threading.Thread(target=_generation_worker,args=(qid,cid,progress,only_missing),daemon=True).start();return progress
-def _generation_worker(qid,cid,progress,only_missing=False):
+    threading.Thread(target=_generation_worker,args=(qid,cid,progress,only_missing,include_approved),daemon=True).start();return progress
+def _generation_worker(qid,cid,progress,only_missing=False,include_approved=False):
     from .db import SessionLocal
     try:
         with SessionLocal() as db:
             item=db.get(Questionnaire,qid)
             if not item or item.customer_id!=cid:raise RuntimeError("Questionnaire not found")
-            run_generation(db,item,progress,only_missing=only_missing)
+            run_generation(db,item,progress,only_missing=only_missing,include_approved=include_approved)
     except Exception as exc:
         progress.update(state="failed",error=str(exc),finished_ts=time.time(),finished_at=now().isoformat());logger.exception("generation_worker_failed questionnaire=%s",qid)
-def run_generation(db,item,progress,on_question_complete=None,only_missing=False):
+def run_generation(db,item,progress,on_question_complete=None,only_missing=False,include_approved=False):
     """Generate every answer with per-question commits so completed work survives cancellation or a crash."""
     cfg=config_for(db,item.customer_id);llm=get_llm(cfg)
     questions=list(db.scalars(select(Question).where(Question.customer_id==item.customer_id,Question.questionnaire_id==item.id).order_by(Question.ordinal)))
     if only_missing and questions:
         answered=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.question_id.in_([q.id for q in questions]))))
         questions=[q for q in questions if q.id not in answered]
+    elif questions and not include_approved:
+        # Approved answers are reviewed work; a full regeneration never replaces them unless explicitly requested.
+        approved=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.status=="approved",Answer.question_id.in_([q.id for q in questions]))))
+        questions=[q for q in questions if q.id not in approved]
     progress.update(total=len(questions),question_status={q.id:"queued" for q in questions},stage="preparing")
     item.status="generating";db.commit()
     for index,q in enumerate(questions,start=1):

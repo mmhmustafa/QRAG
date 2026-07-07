@@ -123,7 +123,7 @@ export default function Review({
     }, 2000);
     return () => clearInterval(timer);
   }, [tracking, customer, id]);
-  async function generate(onlyMissing = false) {
+  async function generate(onlyMissing = false, includeApproved = false) {
     if (!customer) return;
     setGenerating(true);
     setNotice("");
@@ -131,7 +131,7 @@ export default function Review({
       await send(
         `/api/customers/${customer.id}/questionnaires/${id}/generate`,
         "POST",
-        { only_missing: onlyMissing },
+        { only_missing: onlyMissing, include_approved: includeApproved },
       );
     } catch (e: any) {
       if (!String(e?.message || "").includes("already running")) {
@@ -331,6 +331,26 @@ export default function Review({
         q.answer && !["approved", "rejected"].includes(q.answer.status),
     ),
     focusCard = focus ? pending[Math.min(focusIdx, pending.length - 1)] : null;
+  function confirmRegenerate(includeApproved = false) {
+    if (includeApproved) {
+      if (
+        !confirm(
+          `Replace ALL ${total} answers, including your ${approved} approved answer${approved !== 1 ? "s" : ""}?\n\nPrevious versions remain available in Answer History.`,
+        )
+      )
+        return;
+      void generate(false, true);
+      return;
+    }
+    if (
+      approved > 0 &&
+      !confirm(
+        `Regenerate ${total - approved} answers?\n\nYour ${approved} approved answer${approved !== 1 ? "s" : ""} will be kept unchanged.`,
+      )
+    )
+      return;
+    void generate();
+  }
   function jumpTo(q: any) {
     if (!matchesFilter(q)) setStatusFilter("all");
     if (focus) {
@@ -408,7 +428,10 @@ export default function Review({
             </div>
           </details>
         )}
-        <button disabled={generating || tracking} onClick={() => generate()}>
+        <button
+          disabled={generating || tracking}
+          onClick={() => confirmRegenerate()}
+        >
           {generating || tracking
             ? "Generating…"
             : answered
@@ -575,6 +598,16 @@ export default function Review({
               >
                 Search approved answers
               </button>
+              {approved > 0 && (
+                <button
+                  onClick={(e) => {
+                    closeMenu(e);
+                    confirmRegenerate(true);
+                  }}
+                >
+                  Regenerate all incl. approved…
+                </button>
+              )}
             </div>
           </details>
         </div>
@@ -771,7 +804,6 @@ function AnswerCard(p: any) {
         </div>
       </article>
     );
-  const confidence = confidenceInfo(a.confidence);
   return (
     <article id={`q-card-${q.id}`} className={`review-card ${a.status}`}>
       <div className="rc-body">
@@ -798,9 +830,6 @@ function AnswerCard(p: any) {
               Regeneration failed
             </span>
           )}
-          <span className={`confidence-badge ${confidence.className}`}>
-            {confidence.label} confidence
-          </span>
           <span className={`badge ${a.status}`}>
             {STATUS_LABELS[a.status] || a.status.replaceAll("_", " ")}
             {a.golden ? " · ⭐ Golden" : ""}
@@ -922,7 +951,14 @@ function AnswerCard(p: any) {
             <div className="evidence-body">
               <div className="quality-breakdown">
                 <div>
-                  <span>Retrieval Quality</span>
+                  <span>Evidence Strength</span>
+                  <strong>
+                    {strengthInfo(a.confidence).label} ·{" "}
+                    {Math.round(a.confidence * 100)}%
+                  </strong>
+                </div>
+                <div>
+                  <span>Retrieval Match</span>
                   <strong>
                     {Math.round(
                       (a.debug_data?.retrieval_quality ?? a.confidence) * 100,
@@ -931,15 +967,11 @@ function AnswerCard(p: any) {
                   </strong>
                 </div>
                 <div>
-                  <span>Evidence Consistency</span>
+                  <span>Source Consistency</span>
                   <strong>
                     {Math.round((a.debug_data?.evidence_consistency ?? 0) * 100)}
                     %
                   </strong>
-                </div>
-                <div>
-                  <span>Answer Confidence</span>
-                  <strong>{Math.round(a.confidence * 100)}%</strong>
                 </div>
               </div>
               {a.debug_data?.superseded_documents?.length > 0 && (
@@ -1031,7 +1063,7 @@ function AnswerCard(p: any) {
                     <strong>Version {v.version}</strong>
                     <span>
                       {new Date(v.created_at).toLocaleString()} ·{" "}
-                      {confidenceInfo(v.confidence).label}
+                      {strengthInfo(v.confidence).label} evidence
                     </span>
                   </div>
                   <p>{v.text}</p>
@@ -1090,10 +1122,11 @@ function formatDuration(seconds: number) {
   if (minutes < 60) return `${minutes}m ${rest}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
-function confidenceInfo(score: number) {
+function strengthInfo(score: number) {
+  // Evidence framing, not answer-confidence: the score measures documentation coverage.
   // Buckets track the backend's status thresholds: >=0.7 is the auto-approve candidate boundary.
-  if (score >= 0.7) return { label: "High", className: "high" };
-  if (score >= 0.45) return { label: "Medium", className: "medium" };
-  if (score >= 0.25) return { label: "Low", className: "low" };
-  return { label: "Very Low", className: "very-low" };
+  if (score >= 0.7) return { label: "Strong", className: "high" };
+  if (score >= 0.45) return { label: "Good", className: "medium" };
+  if (score >= 0.25) return { label: "Limited", className: "low" };
+  return { label: "Minimal", className: "very-low" };
 }
