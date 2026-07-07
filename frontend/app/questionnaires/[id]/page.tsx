@@ -999,7 +999,7 @@ function AnswerCard(p: any) {
             <>
               <button
                 disabled={p.working === a.id}
-                onClick={() => p.save(a, "draft")}
+                onClick={() => p.save(a, a.status)}
               >
                 Save Edit
               </button>

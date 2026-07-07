@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session,selectinload
 from .config import settings
 from .db import Base,engine,get_db,SessionLocal
 from .models import Customer,Document,DocumentChunk,Questionnaire,Question,Answer,AnswerVersion,ProviderConfig,GlobalProviderConfig,AuditLog
-from .services import ingest,build_questionnaire,export_xlsx,export_pdf,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,suggestion_pool,suggestions_from_pool,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents,backup_sqlite_database
+from .services import ingest,build_questionnaire,export_xlsx,export_pdf,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,suggestion_pool,suggestions_from_pool,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents,backup_sqlite_database,apply_version_restore
 from .providers import get_llm,get_embeddings
 
 Base.metadata.create_all(engine)
@@ -358,9 +358,9 @@ def answer_versions(cid:int,aid:int,db:Session=Depends(get_db)):
     scoped(db,Answer,aid,cid);return [{"id":v.id,"version":v.version,"text":v.text,"confidence":v.confidence,"status":v.status,"sources":v.sources,"created_at":v.created_at} for v in db.scalars(select(AnswerVersion).where(AnswerVersion.customer_id==cid,AnswerVersion.answer_id==aid).order_by(AnswerVersion.version.desc()))]
 @app.post("/api/customers/{cid}/answers/{aid}/versions/{version}/restore")
 def restore_answer_version(cid:int,aid:int,version:int,db:Session=Depends(get_db)):
-    answer=scoped(db,Answer,aid,cid);snapshot=db.scalar(select(AnswerVersion).where(AnswerVersion.customer_id==cid,AnswerVersion.answer_id==aid,AnswerVersion.version==version))
-    if not snapshot:raise HTTPException(404,"Version not found")
-    answer.text=snapshot.text;answer.confidence=snapshot.confidence;answer.status="draft";answer.sources=snapshot.sources;next_version=(db.scalar(select(func.max(AnswerVersion.version)).where(AnswerVersion.answer_id==aid)) or 0)+1;db.add(AnswerVersion(customer_id=cid,answer_id=aid,version=next_version,text=answer.text,confidence=answer.confidence,status=answer.status,sources=answer.sources));db.add(AuditLog(customer_id=cid,action="answer_version_restore",entity_type="answer",entity_id=aid,details={"restored_version":version,"new_version":next_version}));db.commit();return {"ok":True,"version":next_version}
+    answer=scoped(db,Answer,aid,cid);next_version=apply_version_restore(db,answer,version)
+    if next_version is None:raise HTTPException(404,"Version not found")
+    db.add(AuditLog(customer_id=cid,action="answer_version_restore",entity_type="answer",entity_id=aid,details={"restored_version":version,"new_version":next_version}));db.commit();return {"ok":True,"version":next_version}
 def export_questionnaire_or_404(db,cid,qid):
     item=db.scalar(select(Questionnaire).where(Questionnaire.id==qid,Questionnaire.customer_id==cid).options(selectinload(Questionnaire.questions).selectinload(Question.answer)))
     if not item:raise HTTPException(404,"Not found")

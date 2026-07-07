@@ -385,6 +385,16 @@ def _estimated_row_height(values,widths):
         needed=sum(max(1,-(-len(part)//per_line)) for part in text.splitlines()) if text else 1
         lines=max(lines,needed)
     return min(300,lines*14+4)
+def apply_version_restore(db,answer,version):
+    """Restore a prior draft's text: the restored status comes from that version's own snapshot,
+    not a fixed value — the reviewer sees the review state the answer actually had back then,
+    still sitting in whichever triage bucket (Ready/Check/Manual/Approved) it belonged to."""
+    snapshot=db.scalar(select(AnswerVersion).where(AnswerVersion.customer_id==answer.customer_id,AnswerVersion.answer_id==answer.id,AnswerVersion.version==version))
+    if not snapshot:return None
+    answer.text=snapshot.text;answer.confidence=snapshot.confidence;answer.status=snapshot.status;answer.sources=snapshot.sources
+    next_version=(db.scalar(select(func.max(AnswerVersion.version)).where(AnswerVersion.answer_id==answer.id)) or 0)+1
+    db.add(AnswerVersion(customer_id=answer.customer_id,answer_id=answer.id,version=next_version,text=answer.text,confidence=answer.confidence,status=answer.status,sources=answer.sources))
+    return next_version
 def export_xlsx(item,internal=False,customer_name=""):
     from openpyxl.styles import Alignment,Font,PatternFill
     from openpyxl.utils import get_column_letter
