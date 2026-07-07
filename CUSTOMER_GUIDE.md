@@ -97,7 +97,11 @@ Review tips:
 - Mark your best reusable answers as **Golden** — future questionnaires reuse approved answers automatically when the evidence still holds.
 
 ### f. Export
-**Export ▾ → Export customer copy** produces a clean spreadsheet with only questions and approved answers (it warns if any would be blank). **Export with internal evidence** is your internal review copy with sources and confidence.
+The **Export ▾** menu offers the customer copy in two formats, both containing only questions and approved answers (it warns first if any would be blank):
+- **Excel** — a formatted table (title header, wrapped text, sized columns) ready to send or edit.
+- **PDF** — the questionnaire in reading order, each answer directly beneath its question.
+
+**Export with internal evidence** is your internal review copy with sources and confidence.
 
 ## 5. Day-to-day notes
 

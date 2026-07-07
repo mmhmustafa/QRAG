@@ -388,6 +388,15 @@ export default function Review({
       .map(([qid]) => Number(qid));
     if (failedIds.length) void generate(false, false, failedIds);
   }
+  function confirmExport() {
+    const blank = total - approved;
+    return (
+      blank <= 0 ||
+      confirm(
+        `${blank} of ${total} questions have no approved answer and will be blank in the customer copy.\n\nExport anyway?`,
+      )
+    );
+  }
   function confirmRegenerate(includeApproved = false) {
     if (includeApproved) {
       if (
@@ -478,18 +487,20 @@ export default function Review({
               <a
                 onClick={(e) => {
                   closeMenu(e);
-                  const blank = total - approved;
-                  if (
-                    blank > 0 &&
-                    !confirm(
-                      `${blank} of ${total} questions have no approved answer and will be blank in the customer copy.\n\nExport anyway?`,
-                    )
-                  )
-                    e.preventDefault();
+                  if (!confirmExport()) e.preventDefault();
                 }}
                 href={`${API}/api/customers/${customer?.id}/questionnaires/${id}/export`}
               >
-                Export customer copy
+                Export customer copy (Excel)
+              </a>
+              <a
+                onClick={(e) => {
+                  closeMenu(e);
+                  if (!confirmExport()) e.preventDefault();
+                }}
+                href={`${API}/api/customers/${customer?.id}/questionnaires/${id}/export-pdf`}
+              >
+                Export customer copy (PDF)
               </a>
               <a
                 onClick={closeMenu}

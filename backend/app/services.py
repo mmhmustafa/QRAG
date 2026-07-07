@@ -376,10 +376,60 @@ def run_generation(db,item,progress,on_question_complete=None,only_missing=False
 def generate_questionnaire(db,item):
     run_generation(db,item,new_progress(item.id,item.customer_id))
     return db.scalar(select(func.count(Question.id)).where(Question.questionnaire_id==item.id))
-def export_xlsx(item,internal=False):
-    wb=Workbook();ws=wb.active;ws.title="Internal Review" if internal else "Completed Questionnaire";ws.append(["Question","Final Approved Answer"]+( ["Customer Scope","Knowledge Collections","Category","Evidence","Confidence","Reviewer","Approval Date","Answer Version","Golden Answer Used","Reuse Source Answer ID"] if internal else []))
-    for q in item.questions:
+def _estimated_row_height(values,widths):
+    """Excel does not auto-fit wrapped rows written by openpyxl; estimate the height from the longest cell."""
+    lines=1
+    for value,width in zip(values,widths):
+        text=str(value) if value is not None else ""
+        per_line=max(10,int(width*1.1))
+        needed=sum(max(1,-(-len(part)//per_line)) for part in text.splitlines()) if text else 1
+        lines=max(lines,needed)
+    return min(300,lines*14+4)
+def export_xlsx(item,internal=False,customer_name=""):
+    from openpyxl.styles import Alignment,Font,PatternFill
+    from openpyxl.utils import get_column_letter
+    wb=Workbook();ws=wb.active;ws.title="Internal Review" if internal else "Completed Questionnaire"
+    headers=["Question","Final Approved Answer"]+(["Customer Scope","Knowledge Collections","Category","Evidence","Confidence","Reviewer","Approval Date","Answer Version","Golden Answer Used","Reuse Source Answer ID"] if internal else [])
+    widths=[70,90]+([14,24,14,40,12,14,18,12,16,20] if internal else [])
+    span=len(headers)
+    ws.merge_cells(start_row=1,start_column=1,end_row=1,end_column=span)
+    title=ws.cell(row=1,column=1,value=customer_name or "Customer Questionnaire");title.font=Font(bold=True,size=16);title.alignment=Alignment(horizontal="center",vertical="center");ws.row_dimensions[1].height=30
+    ws.merge_cells(start_row=2,start_column=1,end_row=2,end_column=span)
+    subtitle=ws.cell(row=2,column=1,value=f"{item.name} · {len(item.questions)} questions · exported {now().strftime('%d %b %Y')}");subtitle.font=Font(size=10,color="FF666666");subtitle.alignment=Alignment(horizontal="center")
+    header_row=4
+    for index,name in enumerate(headers,start=1):
+        cell=ws.cell(row=header_row,column=index,value=name);cell.font=Font(bold=True,color="FFFFFFFF");cell.fill=PatternFill("solid",fgColor="FF176B63");cell.alignment=Alignment(vertical="center")
+    ws.row_dimensions[header_row].height=20
+    for index,width in enumerate(widths,start=1):ws.column_dimensions[get_column_letter(index)].width=width
+    wrap=Alignment(wrap_text=True,vertical="top")
+    row=header_row+1
+    for q in sorted(item.questions,key=lambda x:x.ordinal):
         answer=q.answer
-        if internal:ws.append([q.text,answer.text if answer else "",item.customer_id,", ".join((answer.collections if answer else item.collections) or []),answer.category if answer else "",", ".join(s["document"] for s in answer.sources) if answer else "",answer.confidence if answer else 0,answer.reviewer if answer else "",answer.approved_at if answer else None,"Latest",bool(answer and answer.golden),answer.reused_from_answer_id if answer else None])
-        else:ws.append([q.text,answer.text if answer and answer.status=="approved" else ""])
+        if internal:values=[q.text,answer.text if answer else "",item.customer_id,", ".join((answer.collections if answer else item.collections) or []),answer.category if answer else "",", ".join(s["document"] for s in answer.sources) if answer else "",answer.confidence if answer else 0,answer.reviewer if answer else "",answer.approved_at if answer else None,"Latest",bool(answer and answer.golden),answer.reused_from_answer_id if answer else None]
+        else:values=[q.text,answer.text if answer and answer.status=="approved" else ""]
+        for index,value in enumerate(values,start=1):ws.cell(row=row,column=index,value=value).alignment=wrap
+        ws.row_dimensions[row].height=_estimated_row_height(values[:2],widths[:2])
+        row+=1
+    ws.freeze_panes=ws.cell(row=header_row+1,column=1)
     stream=io.BytesIO();wb.save(stream);stream.seek(0);return stream
+NUMBERED_QUESTION=re.compile(r"^\s*q?\s?\d{1,4}[.)]",re.I)
+def export_pdf(item,customer_name=""):
+    """Customer copy in the questionnaire's own reading order: each question with its approved answer beneath it."""
+    from fpdf import FPDF
+    pdf=FPDF(format="A4");pdf.set_margins(18,18,18);pdf.set_auto_page_break(auto=True,margin=18);pdf.add_page()
+    font="helvetica";arial=Path("C:/Windows/Fonts/arial.ttf");arial_bold=Path("C:/Windows/Fonts/arialbd.ttf")
+    if arial.exists():
+        pdf.add_font("body","",str(arial));pdf.add_font("body","B",str(arial_bold if arial_bold.exists() else arial));font="body"
+    clean=(lambda text:text) if font=="body" else (lambda text:text.encode("latin-1","replace").decode("latin-1"))
+    def paragraph(height,text,align="L"):pdf.multi_cell(0,height,clean(text),align=align,new_x="LMARGIN",new_y="NEXT")
+    pdf.set_font(font,"B",16);paragraph(9,customer_name or "Customer Questionnaire",align="C")
+    pdf.set_font(font,"",10);pdf.set_text_color(110);paragraph(6,f"{item.name} · {len(item.questions)} questions · {now().strftime('%d %b %Y')}",align="C");pdf.set_text_color(0);pdf.ln(6)
+    for index,q in enumerate(sorted(item.questions,key=lambda x:x.ordinal),start=1):
+        label=q.text if NUMBERED_QUESTION.match(q.text) else f"{index}. {q.text}"
+        pdf.set_font(font,"B",11);paragraph(6,label)
+        answer=q.answer.text if q.answer and q.answer.status=="approved" else ""
+        pdf.set_font(font,"",11)
+        if answer:paragraph(6,answer)
+        else:pdf.set_text_color(150);paragraph(6,"(no approved answer)");pdf.set_text_color(0)
+        pdf.ln(3)
+    return io.BytesIO(bytes(pdf.output()))
