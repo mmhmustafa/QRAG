@@ -656,6 +656,20 @@ export default function Review({
               Approve All Ready ({ready})
             </button>
           )}
+          {statusFilter === "needs_review" && counts.needs_review > 0 && (
+            <button
+              onClick={() => {
+                if (
+                  confirm(
+                    `Approve all ${counts.needs_review} Check Suggested answers?\n\nThese were flagged "confirm wording before approval" — approving in bulk skips that check. Individual answers can still be edited afterwards.`,
+                  )
+                )
+                  void bulk("approve_check");
+              }}
+            >
+              Approve All Check Suggested ({counts.needs_review})
+            </button>
+          )}
           <button
             className="secondary"
             onClick={() => {

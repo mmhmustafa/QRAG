@@ -340,8 +340,9 @@ class BulkBody(BaseModel):answer_ids:list[int]=[];action:str
 def bulk_answers(cid:int,body:BulkBody,db:Session=Depends(get_db)):
     answers=list(db.scalars(select(Answer).where(Answer.customer_id==cid,Answer.id.in_(body.answer_ids)))) if body.answer_ids else []
     if body.action=="approve_high":answers=list(db.scalars(select(Answer).where(Answer.customer_id==cid,Answer.status=="approved_candidate")))
+    if body.action=="approve_check":answers=list(db.scalars(select(Answer).where(Answer.customer_id==cid,Answer.status=="needs_review")))
     for answer in answers:
-        if body.action in {"approve","approve_high"}:answer.status="approved";answer.approved_at=datetime.now(timezone.utc).replace(tzinfo=None);answer.reviewer="Reviewer"
+        if body.action in {"approve","approve_high","approve_check"}:answer.status="approved";answer.approved_at=datetime.now(timezone.utc).replace(tzinfo=None);answer.reviewer="Reviewer"
         elif body.action=="manual":answer.status="manual_review";answer.classification_reason="Marked for manual review by reviewer."
         elif body.action=="regenerate":
             q=scoped(db,Question,answer.question_id,cid);cfg=config_for(db,cid);generate_one(db,q,cfg,get_llm(cfg))
