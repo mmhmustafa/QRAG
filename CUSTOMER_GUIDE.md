@@ -58,7 +58,7 @@ If your organization runs its own LLM gateway (any OpenAI-compatible endpoint), 
 2. Enter your gateway's **AI Base URL** (e.g. `https://llm.company.local/v1`) — required, there is no default.
 3. Enter the **Chat Model** name exactly as your gateway expects it (no model discovery is needed).
 4. If your gateway requires a token, paste it as the AI API Key — it is sent as `Authorization: Bearer <token>`. If it requires extra headers (organization IDs, routing), add them as **Custom Headers (JSON)**, e.g. `{"X-Org": "prod"}` — they are sent on every chat and embedding request.
-5. For embeddings, set **Embedding Provider** to `custom` with your gateway's embedding base URL and model, or keep a separate embedding provider — chat and embeddings are configured independently.
+5. For embeddings, set **Embedding Provider** to `enterprise` (or `custom` — they are the same) with your gateway's embedding base URL and model, or keep a separate embedding provider — chat and embeddings are configured independently.
 6. If your gateway does not use OpenAI's response format, switch **OpenAI-compatible mode** off; common `response`/`output`/`text` envelopes are then accepted. The endpoint paths (default `/chat/completions` and `/embeddings`) are also adjustable.
 7. Click **Test AI Connection** and **Test Embedding Connection** before saving — both must show Connected.
 

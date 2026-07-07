@@ -162,7 +162,9 @@ def get_embeddings(config):
     if config is None:raise RuntimeError("Embedding configuration is required; refusing to fall back to mock")
     name=(config.embedding_provider or "").strip().lower()
     if name=="mock":return MockEmbeddingProvider()
-    cls={"openai":OpenAIEmbeddingProvider,"azure_openai":AzureEmbeddingProvider,"openrouter":OpenRouterEmbeddingProvider,"ollama":OllamaEmbeddingProvider,"sentence_transformers":SentenceTransformerProvider,"bge":BGEProvider,"e5":E5Provider,"custom":CustomEmbeddingProvider}.get(name)
+    # "enterprise" and "custom" are the same OpenAI-compatible endpoint provider; both names are accepted so the
+    # embedding choice mirrors the chat provider's naming.
+    cls={"openai":OpenAIEmbeddingProvider,"azure_openai":AzureEmbeddingProvider,"openrouter":OpenRouterEmbeddingProvider,"ollama":OllamaEmbeddingProvider,"sentence_transformers":SentenceTransformerProvider,"bge":BGEProvider,"e5":E5Provider,"custom":CustomEmbeddingProvider,"enterprise":CustomEmbeddingProvider}.get(name)
     if not cls:raise ValueError(f"Unknown embedding provider: {name}")
     return cls(config)
 

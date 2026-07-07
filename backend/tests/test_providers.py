@@ -85,3 +85,10 @@ def test_recovered_content_after_transient_null(monkeypatch):
     monkeypatch.setattr(providers.time,"sleep",lambda s:None)
     cfg=SimpleNamespace(ai_base_url="http://llm.local/v1",llm_model="test-model",temperature=0,max_tokens=10,top_p=1,retry_count=2,timeout=5,ai_api_key=None,api_key=None,custom_headers=None,openai_compatible_mode=True,chat_endpoint_path="/chat/completions")
     assert providers.OpenAICompatibleProvider(cfg).chat([{"role":"user","content":"hi"}])=="Recovered answer"
+
+def test_enterprise_embedding_alias_matches_custom():
+    from types import SimpleNamespace
+    from app.providers import get_embeddings, CustomEmbeddingProvider
+    cfg=lambda name:SimpleNamespace(embedding_provider=name)
+    assert type(get_embeddings(cfg("enterprise")))is CustomEmbeddingProvider
+    assert type(get_embeddings(cfg("custom")))is CustomEmbeddingProvider
