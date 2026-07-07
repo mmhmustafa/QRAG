@@ -192,7 +192,7 @@ def retrieve(db,q,cid,limit=None,collections=None):
         if len(results)>=limit:break
     logger.info("retrieval_results customer=%s count=%s scores=%s",cid,len(results),[round(x["score"],4) for x in results]);return results
 def build_questionnaire(db,path,name,cid,collections=None):
-    cfg=config_for(db,cid);text=parse_file(path);llm=get_llm(cfg);qs=llm.extract_questions(text) or [x.strip() for x in text.splitlines() if x.strip()][:100]
+    cfg=config_for(db,cid);text=parse_file(path);llm=get_llm(cfg);qs=llm.extract_questions(text) or [x.strip() for x in text.splitlines() if x.strip()][:1000]
     item=Questionnaire(customer_id=cid,name=name,path=str(path),collections=normalize_collections(collections));db.add(item);db.flush()
     for i,qtext in enumerate(qs):
         db.add(Question(customer_id=cid,questionnaire_id=item.id,text=qtext,ordinal=i))

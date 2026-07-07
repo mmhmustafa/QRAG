@@ -30,8 +30,27 @@ class MockLLMProvider(BaseLLMProvider):
         return merged[:700] if merged else MANUAL
     def summarize(self,text):return text[:500]
     def extract_questions(self,text):
-        lines=[re.sub(r"^\s*(?:\d+[.)]|[-*])\s*","",x).strip() for x in text.splitlines()]
-        return [x for x in lines if len(x)>5 and (x.endswith("?") or re.match(r"^(describe|explain|provide|do |does |is |are |what |how |where |when |who |can |which )",x,re.I))]
+        lines=[x.strip() for x in text.splitlines()]
+        counts={}
+        for x in lines:
+            if x:counts[x]=counts.get(x,0)+1
+        page_line=re.compile(r"^page \d+(?: of \d+)?$",re.I)
+        question_shaped=lambda x:len(x)>5 and (x.endswith("?") or bool(re.match(r"^(describe|explain|provide|list|detail|confirm|state|outline|specify|do |does |is |are |what |how |where |when |who |can |which )",x,re.I)))
+        found=[];current=None  # current=(text, explicitly Q-numbered)
+        for line in lines:
+            # Page headers/footers repeat verbatim across pages; wrapped continuations start lowercase and stay exempt.
+            if not line or page_line.match(line) or (counts[line]>=2 and not line[:1].islower()):continue
+            explicit=re.match(r"^q\s?\d{1,4}[.):]\s*(\S.*)",line,re.I);plain=re.match(r"^(?:\d{1,4}[.)]|[-*])\s*(\S.*)",line);marker=explicit or plain
+            if marker:
+                if current:found.append(current)
+                current=(marker.group(1).strip(),bool(explicit))
+            elif current and (current[0][-1:] not in ".?!" or line[:1].islower()):
+                current=(f"{current[0]} {line}",current[1])  # rejoin lines the source document wrapped mid-sentence
+        if current:found.append(current)
+        # Explicit Q-numbers mark questions unambiguously; plain numbering keeps the shape test so numbered section headings are skipped.
+        questions=[q for q,explicit in found if explicit or question_shaped(q)]
+        if questions:return questions
+        return [x for x in lines if question_shaped(x)]
     def classify_question(self,text):
         for category,words in {"Security":["encrypt","security","access"],"Compliance":["audit","iso","soc","compliance"],"Support":["support","response","sla"],"Legal":["legal","contract","privacy"],"Products":["product","feature"]}.items():
             if any(w in text.lower() for w in words):return category
