@@ -81,8 +81,11 @@ class OpenAICompatibleProvider(MockLLMProvider):
                 response=httpx.post(self._url(),headers=headers,json=payload,timeout=self.config.timeout);response.raise_for_status()
                 if stream:return response.iter_lines()
                 body=response.json()
-                if getattr(self.config,"openai_compatible_mode",True):return body["choices"][0]["message"]["content"]
-                return body.get("response") or body.get("output") or body.get("text") or (body.get("choices") or [{}])[0].get("text") or (body.get("choices") or [{"message":{}}])[0].get("message",{}).get("content") or ""
+                if getattr(self.config,"openai_compatible_mode",True):content=body["choices"][0]["message"]["content"]
+                else:content=body.get("response") or body.get("output") or body.get("text") or (body.get("choices") or [{}])[0].get("text") or (body.get("choices") or [{"message":{}}])[0].get("message",{}).get("content")
+                # Providers occasionally return content: null (rate limiting, refusals); retry it like any other transient failure.
+                if content is None or not str(content).strip():raise RuntimeError(f"{self.name} returned an empty response (model: {self.config.llm_model})")
+                return content
             except Exception as exc:
                 error=exc
                 if attempt<self.config.retry_count:time.sleep(min(2**attempt,4))
@@ -91,7 +94,7 @@ class OpenAICompatibleProvider(MockLLMProvider):
         if not context:return MANUAL
         evidence="\n\n".join(f"SOURCE: {x['document']}\n{x['content']}" for x in context)
         result=self.chat([{"role":"system","content":GROUNDING+"\n"+instructions},{"role":"user","content":f"Question: {question}\n\nRetrieved context:\n{evidence}"}])
-        return result.strip() or MANUAL
+        return (result or "").strip() or MANUAL
     def summarize(self,text):return self.chat([{"role":"system","content":"Summarize concisely."},{"role":"user","content":text}])
     def extract_questions(self,text):
         # Deterministic extraction keeps ingestion offline and consistent across providers.

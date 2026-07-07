@@ -54,3 +54,34 @@ def test_clean_customer_answer_strips_markdown():
     cleaned=clean_customer_answer(raw,[])
     assert "**" not in cleaned and "`" not in cleaned and "##" not in cleaned
     assert "Key governance bodies" in cleaned and "Meetings are held monthly." in cleaned
+
+def test_null_provider_content_is_retried_then_fails_with_clear_error(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    import app.providers as providers
+    calls={"n":0}
+    class FakeResponse:
+        def raise_for_status(self):pass
+        def json(self):return {"choices":[{"message":{"content":None}}]}
+    def fake_post(*args,**kwargs):
+        calls["n"]+=1
+        return FakeResponse()
+    monkeypatch.setattr(providers.httpx,"post",fake_post)
+    monkeypatch.setattr(providers.time,"sleep",lambda s:None)
+    cfg=SimpleNamespace(ai_base_url="http://llm.local/v1",llm_model="test-model",temperature=0,max_tokens=10,top_p=1,retry_count=2,timeout=5,ai_api_key=None,api_key=None,custom_headers=None,openai_compatible_mode=True,chat_endpoint_path="/chat/completions")
+    with pytest.raises(RuntimeError,match="empty response"):
+        providers.OpenAICompatibleProvider(cfg).chat([{"role":"user","content":"hi"}])
+    assert calls["n"]==3  # null content is retried like any transient failure
+
+def test_recovered_content_after_transient_null(monkeypatch):
+    from types import SimpleNamespace
+    import app.providers as providers
+    responses=[{"choices":[{"message":{"content":None}}]},{"choices":[{"message":{"content":"Recovered answer"}}]}]
+    class FakeResponse:
+        def __init__(self,body):self._body=body
+        def raise_for_status(self):pass
+        def json(self):return self._body
+    monkeypatch.setattr(providers.httpx,"post",lambda *a,**k:FakeResponse(responses.pop(0)))
+    monkeypatch.setattr(providers.time,"sleep",lambda s:None)
+    cfg=SimpleNamespace(ai_base_url="http://llm.local/v1",llm_model="test-model",temperature=0,max_tokens=10,top_p=1,retry_count=2,timeout=5,ai_api_key=None,api_key=None,custom_headers=None,openai_compatible_mode=True,chat_endpoint_path="/chat/completions")
+    assert providers.OpenAICompatibleProvider(cfg).chat([{"role":"user","content":"hi"}])=="Recovered answer"
