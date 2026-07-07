@@ -344,9 +344,9 @@ def run_generation(db,item,progress,on_question_complete=None,only_missing=False
         answered=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.question_id.in_([q.id for q in questions]))))
         questions=[q for q in questions if q.id not in answered]
     elif questions and not include_approved:
-        # Approved answers are reviewed work; a full regeneration never replaces them unless explicitly requested.
-        approved=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.status=="approved",Answer.question_id.in_([q.id for q in questions]))))
-        questions=[q for q in questions if q.id not in approved]
+        # Approved and reviewer-edited (draft) answers are human work; a full regeneration never replaces them unless explicitly requested.
+        protected=set(db.scalars(select(Answer.question_id).where(Answer.customer_id==item.customer_id,Answer.status.in_(("approved","draft")),Answer.question_id.in_([q.id for q in questions]))))
+        questions=[q for q in questions if q.id not in protected]
     progress.update(total=len(questions),question_status={q.id:"queued" for q in questions},stage="preparing")
     item.status="generating";db.commit()
     for index,q in enumerate(questions,start=1):
@@ -386,12 +386,12 @@ def _estimated_row_height(values,widths):
         lines=max(lines,needed)
     return min(300,lines*14+4)
 def apply_version_restore(db,answer,version):
-    """Restore a prior draft's text: the restored status comes from that version's own snapshot,
-    not a fixed value — the reviewer sees the review state the answer actually had back then,
-    still sitting in whichever triage bucket (Ready/Check/Manual/Approved) it belonged to."""
+    """Restore a prior version's text as a Draft: restores are reviewer decisions, so the answer
+    lands in the visible Draft bucket awaiting one Approve click — never silently re-approved,
+    and never lost (Draft is a first-class filter and is protected from regeneration)."""
     snapshot=db.scalar(select(AnswerVersion).where(AnswerVersion.customer_id==answer.customer_id,AnswerVersion.answer_id==answer.id,AnswerVersion.version==version))
     if not snapshot:return None
-    answer.text=snapshot.text;answer.confidence=snapshot.confidence;answer.status=snapshot.status;answer.sources=snapshot.sources
+    answer.text=snapshot.text;answer.confidence=snapshot.confidence;answer.status="draft";answer.sources=snapshot.sources;answer.classification_reason=f"Version {version} restored by reviewer — approve to finalize."
     next_version=(db.scalar(select(func.max(AnswerVersion.version)).where(AnswerVersion.answer_id==answer.id)) or 0)+1
     db.add(AnswerVersion(customer_id=answer.customer_id,answer_id=answer.id,version=next_version,text=answer.text,confidence=answer.confidence,status=answer.status,sources=answer.sources))
     return next_version

@@ -56,6 +56,11 @@ export default function Review({
     [tracking, setTracking] = useState(false),
     [renderCount, setRenderCount] = useState(60);
   const sentinel = useRef<HTMLDivElement>(null);
+  // The generation poll must never replace page state while a reviewer is typing in an open editor.
+  const editingRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
   const flash = (message: string, kind: "success" | "error" = "success") => {
     setNotice(message);
     setNoticeKind(kind);
@@ -133,10 +138,10 @@ export default function Review({
         setProgress(p);
         ticks++;
         if (p.state === "running") {
-          if (ticks % 5 === 0) void load(id); // refresh answers as they land, without hammering the API
+          if (ticks % 5 === 0 && editingRef.current === undefined) void load(id); // refresh answers as they land — but never over an open editor
         } else {
           setTracking(false);
-          void load(id);
+          if (editingRef.current === undefined) void load(id);
           if (p.state === "failed")
             flash(
               `Generation stopped: ${p.error || "unexpected error"}. Answers generated before the failure were saved.`,
@@ -350,6 +355,8 @@ export default function Review({
       manual_review: item.questions.filter(
         (q: any) => q.answer?.status === "manual_review",
       ).length,
+      draft: item.questions.filter((q: any) => q.answer?.status === "draft")
+        .length,
       approved,
     },
     matchesFilter = (q: any) =>
@@ -370,13 +377,13 @@ export default function Review({
   function generateVisible() {
     const targets = visible.map((q: any) => q.id);
     if (!targets.length) return;
-    const approvedInScope = visible.filter(
-      (q: any) => q.answer?.status === "approved",
+    const protectedInScope = visible.filter((q: any) =>
+      ["approved", "draft"].includes(q.answer?.status),
     ).length;
     if (
-      approvedInScope > 0 &&
+      protectedInScope > 0 &&
       !confirm(
-        `The current filter includes ${approvedInScope} approved answer${approvedInScope !== 1 ? "s" : ""} — they will be replaced.\n\nGenerate ${targets.length} question${targets.length !== 1 ? "s" : ""}?`,
+        `The current filter includes ${protectedInScope} approved or edited (Draft) answer${protectedInScope !== 1 ? "s" : ""} — they will be replaced.\n\nGenerate ${targets.length} question${targets.length !== 1 ? "s" : ""}?`,
       )
     )
       return;
@@ -398,20 +405,23 @@ export default function Review({
     );
   }
   function confirmRegenerate(includeApproved = false) {
+    const drafts = counts.draft;
+    const keptLabel = `${approved} approved${drafts ? ` and ${drafts} edited (Draft)` : ""}`;
     if (includeApproved) {
       if (
         !confirm(
-          `Replace ALL ${total} answers, including your ${approved} approved answer${approved !== 1 ? "s" : ""}?\n\nPrevious versions remain available in Answer History.`,
+          `Replace ALL ${total} answers, including your ${keptLabel} answers?\n\nPrevious versions remain available in Answer History.`,
         )
       )
         return;
       void generate(false, true);
       return;
     }
+    const kept = approved + drafts;
     if (
-      approved > 0 &&
+      kept > 0 &&
       !confirm(
-        `Regenerate ${total - approved} answers?\n\nYour ${approved} approved answer${approved !== 1 ? "s" : ""} will be kept unchanged.`,
+        `Regenerate ${total - kept} answers?\n\nYour ${keptLabel} answer${kept !== 1 ? "s" : ""} will be kept unchanged.`,
       )
     )
       return;
@@ -451,6 +461,7 @@ export default function Review({
         approved_candidate: "jump-ready",
         needs_review: "jump-check",
         manual_review: "jump-manual",
+        draft: "jump-draft",
       }[q.answer.status as string] || "jump-none"
     );
   }
@@ -649,6 +660,16 @@ export default function Review({
               {f.label} <strong>{counts[f.key]}</strong>
             </button>
           ))}
+          {counts.draft > 0 && (
+            <button
+              className={`filter-chip draft-chip ${statusFilter === "draft" ? "active" : ""}`}
+              onClick={() =>
+                setStatusFilter(statusFilter === "draft" ? "all" : "draft")
+              }
+            >
+              Draft <strong>{counts.draft}</strong>
+            </button>
+          )}
           {answered < total && (
             <button
               className={`filter-chip ${statusFilter === "unanswered" ? "active" : ""}`}
@@ -999,7 +1020,7 @@ function AnswerCard(p: any) {
             <>
               <button
                 disabled={p.working === a.id}
-                onClick={() => p.save(a, a.status)}
+                onClick={() => p.save(a, "draft")}
               >
                 Save Edit
               </button>

@@ -302,6 +302,7 @@ class AnswerUpdate(BaseModel):text:str;status:str
 @app.patch("/api/customers/{cid}/answers/{aid}")
 def update_answer(cid:int,aid:int,body:AnswerUpdate,db:Session=Depends(get_db)):
     a=scoped(db,Answer,aid,cid);changed=a.text!=body.text;a.text=body.text;a.status=body.status
+    if body.status=="draft":a.classification_reason="Edited by reviewer — approve to finalize."
     if changed:db.add(AuditLog(customer_id=cid,action="answer_edited",entity_type="answer",entity_id=a.id,details={}));a.golden and db.add(AuditLog(customer_id=cid,action="golden_answer_updated",entity_type="answer",entity_id=a.id,details={}))
     if body.status=="approved":a.approved_at=datetime.now(timezone.utc).replace(tzinfo=None);a.reviewer="Reviewer";a.review_duration_seconds=max(0,int((a.approved_at-(a.review_started_at or a.approved_at)).total_seconds()))
     db.add(AuditLog(customer_id=cid,action="answer_approved" if body.status=="approved" else f"answer_{body.status}",entity_type="answer",entity_id=a.id,details={}));db.commit();return {"ok":True}
