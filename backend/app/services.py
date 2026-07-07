@@ -259,6 +259,18 @@ def build_questionnaire(db,path,name,cid,collections=None):
     db.add(AuditLog(customer_id=cid,action="questionnaire_upload",entity_type="questionnaire",entity_id=item.id,details={"name":name,"questions":len(qs),"numbered_detected":detected}));db.commit()
     item.detected_question_count=detected
     return item
+CONTEXT_META_PATTERNS=(
+    re.compile(r"\b(?:provided|supplied|retrieved|available)\s+(?:documents?|sources?|context|documentation|materials?)\b",re.I),
+    re.compile(r"\b(?:documents?|sources?|documentation|context|materials?)\s+(?:do(?:es)?\s+not|don't|doesn't)\s+(?:contain|mention|specify|state|include|address|cover)\b",re.I),
+    re.compile(r"\bin\s+the\s+(?:provided\s+|supplied\s+|retrieved\s+)?(?:documents?|sources?|context)\b",re.I),
+    re.compile(r"\bbased\s+on\s+the\s+(?:provided|supplied|available|retrieved)\b",re.I),
+    re.compile(r"\bno\s+(?:explicit\s+)?(?:statement|mention|declaration|reference)\s+(?:of|about|in|regarding)\b",re.I),
+)
+def references_internal_context(answer_text):
+    """Customer-ready answers must state facts, not describe the corpus. Catches meta-language like
+    "the supplied sources do not contain an explicit ownership declaration" — grounded, but written
+    about the documentation instead of for the customer."""
+    return any(p.search(answer_text) for p in CONTEXT_META_PATTERNS)
 QUESTION_SENTENCE_SPLIT=re.compile(r"(?<=[.?!])\s+")
 def shared_question_noise(question_texts,minimum=3):
     """Sentences repeated across many questions ("Include any relevant details...", "Variant 2.") carry no
@@ -308,9 +320,12 @@ def generate_one(db,q,cfg,llm,on_stage=None,query_noise=None):
     elif stale_golden:confidence=round(min(1,.5*stale_golden["similarity"]+.3),2)
     elif relevant:confidence=round(min(1,.55*retrieval_quality+.3*evidence_consistency+.15*authority_factor+.03*supporting),2)
     else:confidence=0
+    # Answers written ABOUT the documentation ("the supplied sources do not contain...") are grounded but not
+    # customer-ready; they must be rephrased by a reviewer and can never be auto-promoted to Ready.
+    meta_leak=not preferred and not stale_golden and answer_text!=MANUAL and references_internal_context(answer_text)
     # Borderline answers with reliable evidence get a second model pass; only a confirmed YES promotes them to Ready.
     llm_verified=False
-    if (not preferred and not stale_golden and not contradictions and relevant and answer_text!=MANUAL
+    if (not preferred and not stale_golden and not contradictions and not meta_leak and relevant and answer_text!=MANUAL
             and VERIFY_PROMOTION_MIN<=confidence<.7 and top_score>=RELIABLE_SCORE and cfg.llm_provider!="mock"):
         stage("verifying");llm_verified=llm_supports_answer(llm,q.text,answer_text,generation_ctx)
         if llm_verified:logger.info("llm_verification_promoted customer=%s question=%s confidence=%s",q.customer_id,q.id,confidence)
@@ -321,6 +336,7 @@ def generate_one(db,q,cfg,llm,on_stage=None,query_noise=None):
     elif not relevant:status="manual_review";reason="No relevant documentation found in this product scope."
     elif answer_text==MANUAL:status="manual_review";reason="Current documentation does not support a grounded answer."
     elif contradictions:status="manual_review";reason=f"Documentation disagrees: {primary['document']} vs {', '.join(contradictions)} — reviewer decision required. Draft answer retained from {primary['document']}."
+    elif meta_leak:status="needs_review";reason=(provenance+" " if provenance else "")+"Draft describes the internal documentation instead of answering directly — rephrase before approval."
     elif (confidence>=.7 or llm_verified) and top_score>=RELIABLE_SCORE:status="approved_candidate";reason=provenance+(" Verified against source documentation." if llm_verified else "")
     else:status="needs_review";reason=provenance+(" Confirm wording before approval." if provenance else "Reviewer verification recommended.")
     current_sources=sorted([{"document":x["document"],"document_id":x["document_id"],"category":x["category"],"collections":x.get("collections",[]),"authority":x.get("authority",DEFAULT_AUTHORITY),"role":roles.get(x.get("chunk_id"),"additional"),"page_number":x.get("page_number"),"chunk_id":x["chunk_id"],"score":round(x["score"],4),"text_preview":x["content"][:700]} for x in ctx],key=lambda x:(ROLE_ORDER.get(x["role"],9),-x["score"]));sources=current_sources if preferred and preferred["global_approved"] else (preferred["evidence"] if preferred else current_sources)

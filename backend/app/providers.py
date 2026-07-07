@@ -5,7 +5,7 @@ import httpx
 
 MANUAL="Manual Review Required"
 logger=logging.getLogger("questionnaire.embeddings");logger.setLevel(logging.INFO)
-GROUNDING="Answer only using the retrieved context. Never invent facts. If evidence is insufficient, respond exactly 'Manual Review Required'. Return only a professional, concise, customer-ready answer written in plain prose sentences. Never use markdown or formatting syntax: no asterisks, bold markers, headers, bullet characters, pipes, or tables. Never mention internal documents, source names, chunk IDs, citations, retrieval, or the supplied context."
+GROUNDING="Answer only using the retrieved context. Never invent facts. If evidence is insufficient, respond exactly 'Manual Review Required'. Return only a professional, concise, customer-ready answer written in plain prose sentences. Answer in the organization's voice as a direct statement of fact — never describe what the documents, sources, or provided context do or do not contain, and never mention internal documents, document titles, source names, chunk IDs, citations, retrieval, or the supplied context. If the context only partially answers the question, state the facts it supports directly and stop; otherwise respond exactly 'Manual Review Required'."
 
 class BaseLLMProvider(ABC):
     @abstractmethod
