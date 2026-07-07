@@ -17,3 +17,4 @@ deliverables/
 *.db-wal
 *.db-shm
 customer copy/
+.claude/
