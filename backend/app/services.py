@@ -74,6 +74,16 @@ def normalize_collections(collections):
         clean=str(name).strip()
         if clean and clean not in seen:seen.append(clean)
     return seen
+def delete_all_documents(db,cid):
+    """Remove every document, chunk, and stored file for one customer; other tenants are untouched."""
+    docs=list(db.scalars(select(Document).where(Document.customer_id==cid)))
+    if not docs:return 0
+    paths=[Path(d.path) for d in docs]
+    db.execute(delete(DocumentChunk).where(DocumentChunk.customer_id==cid))
+    db.execute(delete(Document).where(Document.customer_id==cid))
+    db.add(AuditLog(customer_id=cid,action="documents_delete_all",entity_type="customer",entity_id=cid,details={"documents":len(paths)}));db.commit()
+    for path in paths:path.unlink(missing_ok=True)
+    logger.info("documents_delete_all customer=%s count=%s",cid,len(paths));return len(paths)
 def ingest(db,path,name,cid,category="Company",collections=None):
     doc=Document(customer_id=cid,name=name,path=str(path),category=category,size_bytes=path.stat().st_size,status="uploaded",authority=authority_for(category),collections=normalize_collections(collections) or ["General"]);db.add(doc);db.commit();logger.info("document_uploaded customer=%s document=%s name=%s collections=%s",cid,doc.id,name,doc.collections)
     count=index_document(db,doc);db.add(AuditLog(customer_id=cid,action="document_upload",entity_type="document",entity_id=doc.id,details={"name":name,"chunks":count}));db.commit();return doc

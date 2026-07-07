@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session,selectinload
 from .config import settings
 from .db import Base,engine,get_db,SessionLocal
 from .models import Customer,Document,DocumentChunk,Questionnaire,Question,Answer,AnswerVersion,ProviderConfig,GlobalProviderConfig,AuditLog
-from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES
+from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents
 from .providers import get_llm,get_embeddings
 
 Base.metadata.create_all(engine)
@@ -206,6 +206,9 @@ def delete_document(cid:int,did:int,db:Session=Depends(get_db)):
 @app.post("/api/customers/{cid}/documents/{did}/reindex")
 def reindex_document(cid:int,did:int,db:Session=Depends(get_db)):
     doc=scoped(db,Document,did,cid);count=index_document(db,doc);db.add(AuditLog(customer_id=cid,action="document_reindex",entity_type="document",entity_id=did,details={"chunks":count,"embedding_provider":doc.embedding_provider,"embedding_model":doc.embedding_model}));db.commit();return {"chunks":count,"vectors":doc.vector_count,"embedding_provider":doc.embedding_provider,"embedding_model":doc.embedding_model}
+@app.delete("/api/customers/{cid}/documents")
+def delete_documents(cid:int,db:Session=Depends(get_db)):
+    customer_or_404(db,cid);return {"deleted":delete_all_documents(db,cid)}
 @app.post("/api/customers/{cid}/documents/reindex-all")
 def reindex_all_documents(cid:int,db:Session=Depends(get_db)):
     customer_or_404(db,cid);docs=list(db.scalars(select(Document).where(Document.customer_id==cid).order_by(Document.id)));results=[];total=0

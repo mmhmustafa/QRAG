@@ -182,6 +182,24 @@ export default function Knowledge() {
     );
     void load();
   }
+  async function deleteAll() {
+    if (!customer || !docs.length) return;
+    if (
+      !confirm(
+        `Delete all ${docs.length} knowledge documents for ${customer.name}?\n\nEvery document, chunk, and embedding for this customer will be removed. Generated answers keep their stored evidence text, but answer reuse will flag the missing sources.\n\nThis cannot be undone.`,
+      )
+    )
+      return;
+    try {
+      const r = await send(`/api/customers/${customer.id}/documents`, "DELETE");
+      setReindexResult(`${r.deleted} documents deleted. The knowledge base is empty.`);
+      setQueue([]);
+      setRetrieval(undefined);
+      void load();
+    } catch (e) {
+      setReindexResult(`Delete failed: ${errorText(e)}`);
+    }
+  }
   async function reindexAll() {
     if (!customer) return;
     setReindexing(true);
@@ -248,6 +266,13 @@ export default function Knowledge() {
         </div>
         <div className="actions">
           <button
+            className="secondary danger"
+            disabled={!docs.length}
+            onClick={deleteAll}
+          >
+            Delete all
+          </button>
+          <button
             className="secondary"
             disabled={reindexing || !docs.length}
             onClick={reindexAll}
@@ -284,7 +309,7 @@ export default function Knowledge() {
       )}
       {reindexResult && (
         <div
-          className={`notice ${reindexResult.startsWith("Re-index failed") ? "error-notice" : "success-notice"}`}
+          className={`notice ${reindexResult.startsWith("Re-index failed") || reindexResult.startsWith("Delete failed") ? "error-notice" : "success-notice"}`}
         >
           {formatError(reindexResult)}
         </div>
