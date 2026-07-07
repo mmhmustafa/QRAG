@@ -93,7 +93,9 @@ export default function Review({
   }, []);
   const load = (qid: string) =>
     customer &&
-    get(`/api/customers/${customer.id}/questionnaires/${qid}`)
+    get(
+      `/api/customers/${customer.id}/questionnaires/${qid}${searchParams.get("debug") === "1" ? "?debug=1" : ""}`,
+    )
       .then(setItem)
       .catch((error) => flash(formatError(error), "error"));
   useEffect(() => {

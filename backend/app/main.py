@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session,selectinload
 from .config import settings
 from .db import Base,engine,get_db,SessionLocal
 from .models import Customer,Document,DocumentChunk,Questionnaire,Question,Answer,AnswerVersion,ProviderConfig,GlobalProviderConfig,AuditLog
-from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents,backup_sqlite_database
+from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,suggestion_pool,suggestions_from_pool,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents,backup_sqlite_database
 from .providers import get_llm,get_embeddings
 
 Base.metadata.create_all(engine)
@@ -112,8 +112,15 @@ def scoped(db,model,item_id,cid):
     item=db.scalar(select(model).where(model.id==item_id,model.customer_id==cid))
     if not item:raise HTTPException(404,"Not found")
     return item
-def answer_dict(q,db=None):
-    answer=None if not q.answer else {"id":q.answer.id,"text":q.answer.text,"confidence":q.answer.confidence,"status":q.answer.status,"classification_reason":q.answer.classification_reason,"golden":q.answer.golden,"global_approved":q.answer.global_approved,"collections":q.answer.collections or [],"category":q.answer.category,"reviewer":q.answer.reviewer,"approved_at":q.answer.approved_at,"reused_from_answer_id":q.answer.reused_from_answer_id,"sources":q.answer.sources,"debug_data":q.answer.debug_data,"suggestions":approved_suggestions(db,q.text,q.customer_id,q.answer.collections,q.answer.category,q.answer.id) if db else []}
+# Diagnostic fields the review cards read; the heavyweight debug payload (prompt, chunk copies) ships only with ?debug=1.
+DEBUG_SUMMARY_FIELDS=("conflicting_documents","superseded_documents","retrieval_quality","evidence_consistency","evidence_analysis","execution_time_ms","cache_hit","llm_verified")
+def answer_dict(q,pool=None,include_debug=False):
+    if not q.answer:return {"id":q.id,"text":q.text,"ordinal":q.ordinal,"answer":None}
+    # Suggestions only matter while an answer is still reviewable; approved/rejected cards never show the reuse panel.
+    suggestions=suggestions_from_pool(pool,q.text,q.customer_id,q.answer.collections,q.answer.category,q.answer.id) if pool is not None and q.answer.status not in {"approved","rejected"} else []
+    debug=q.answer.debug_data or {}
+    if not include_debug:debug={key:debug.get(key) for key in DEBUG_SUMMARY_FIELDS}
+    answer={"id":q.answer.id,"text":q.answer.text,"confidence":q.answer.confidence,"status":q.answer.status,"classification_reason":q.answer.classification_reason,"golden":q.answer.golden,"global_approved":q.answer.global_approved,"collections":q.answer.collections or [],"category":q.answer.category,"reviewer":q.answer.reviewer,"approved_at":q.answer.approved_at,"reused_from_answer_id":q.answer.reused_from_answer_id,"sources":q.answer.sources,"debug_data":debug,"suggestions":suggestions}
     return {"id":q.id,"text":q.text,"ordinal":q.ordinal,"answer":answer}
 @app.get("/health")
 def health():return {"status":"ok","version":"0.2.0"}
@@ -255,10 +262,11 @@ def questionnaires(cid:int,db:Session=Depends(get_db)):
         total=db.scalar(select(func.count(Question.id)).where(Question.customer_id==cid,Question.questionnaire_id==x.id));answered=db.scalar(select(func.count(Answer.id)).join(Question,Question.id==Answer.question_id).where(Answer.customer_id==cid,Question.questionnaire_id==x.id));manual=db.scalar(select(func.count(Answer.id)).join(Question,Question.id==Answer.question_id).where(Answer.customer_id==cid,Question.questionnaire_id==x.id,Answer.status=="manual_review"));progress=generation_progress(x.id);items.append({"id":x.id,"name":x.name,"collections":x.collections or [],"status":x.status,"created_at":x.created_at,"question_count":total,"answered_count":answered,"manual_review_count":manual,"generation":None if not progress or progress["customer_id"]!=cid else {"state":progress["state"],"completed":progress["completed"],"total":progress["total"],"percent":round(100*progress["completed"]/progress["total"]) if progress["total"] else 0,"failed_count":progress["failed_count"]}})
     return items
 @app.get("/api/customers/{cid}/questionnaires/{qid}")
-def questionnaire(cid:int,qid:int,db:Session=Depends(get_db)):
+def questionnaire(cid:int,qid:int,debug:bool=False,db:Session=Depends(get_db)):
     item=db.scalar(select(Questionnaire).where(Questionnaire.id==qid,Questionnaire.customer_id==cid).options(selectinload(Questionnaire.questions).selectinload(Question.answer)))
     if not item:raise HTTPException(404,"Not found")
-    return {"id":item.id,"name":item.name,"collections":item.collections or [],"status":item.status,"questions":[answer_dict(q,db) for q in sorted(item.questions,key=lambda q:q.ordinal)]}
+    pool=suggestion_pool(db,cid)
+    return {"id":item.id,"name":item.name,"collections":item.collections or [],"status":item.status,"questions":[answer_dict(q,pool=pool,include_debug=debug) for q in sorted(item.questions,key=lambda q:q.ordinal)]}
 def progress_dict(progress):
     total=progress["total"];completed=progress["completed"];remaining=max(0,total-completed)
     elapsed=round((progress.get("finished_ts") or time.time())-progress["started_ts"],1)

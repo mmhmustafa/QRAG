@@ -110,20 +110,35 @@ def question_terms(value):
 def question_similarity(a,b):
     left,right=question_terms(a),question_terms(b)
     return len(left&right)/max(1,len(left|right))
-def approved_suggestions(db,question,cid,collections=None,category=None,exclude_answer_id=None,limit=3):
+def suggestion_pool(db,cid):
+    """Prefetch every reuse candidate once — approved answers, their questions, and evidence-document state.
+    Loading a 350-question review page previously re-scanned all approved answers per question (N+1)."""
+    rows=db.execute(select(Answer,Question,Customer).join(Question,Question.id==Answer.question_id).join(Customer,Customer.id==Answer.customer_id).where(Answer.status=="approved",((Answer.customer_id==cid)|(Answer.global_approved==True)))).all()
+    document_ids=set()
+    for answer,_,_ in rows:document_ids.update(answer.evidence_document_ids or [])
+    documents={d.id:d for d in db.scalars(select(Document).where(Document.id.in_(document_ids)))} if document_ids else {}
+    pool=[]
+    for answer,previous,customer in rows:
+        evidence=[documents[i] for i in (answer.evidence_document_ids or []) if i in documents]
+        evidence_current=bool(evidence) and all(d.enabled and d.status=="indexed" and d.customer_id==answer.customer_id and (not answer.approved_at or not d.updated_at or d.updated_at<=answer.approved_at) for d in evidence)
+        pool.append({"answer":answer,"question_text":previous.text,"terms":question_terms(previous.text),"customer_name":customer.name,"evidence_current":evidence_current})
+    return pool
+def suggestions_from_pool(pool,question,cid,collections=None,category=None,exclude_answer_id=None,limit=3):
     selected=set(normalize_collections(collections))
     if not selected:return []
-    rows=db.execute(select(Answer,Question,Customer).join(Question,Question.id==Answer.question_id).join(Customer,Customer.id==Answer.customer_id).where(Answer.status=="approved")).all();found=[]
-    for answer,previous,customer in rows:
+    terms=question_terms(question);found=[]
+    for item in pool:
+        answer=item["answer"]
         if answer.id==exclude_answer_id:continue
         # Reuse stays inside the selected Knowledge Collections unless an admin explicitly approved the answer globally.
         same_scope=answer.customer_id==cid and selected.intersection(answer.collections or []) and (not category or answer.category in {category,"General","Company"})
         if not same_scope and not answer.global_approved:continue
-        score=question_similarity(question,previous.text)
-        documents=list(db.scalars(select(Document).where(Document.id.in_(answer.evidence_document_ids or [])))) if answer.evidence_document_ids else [];evidence_current=bool(documents) and all(d.enabled and d.status=="indexed" and d.customer_id==answer.customer_id and (not answer.approved_at or not d.updated_at or d.updated_at<=answer.approved_at) for d in documents)
+        score=len(terms&item["terms"])/max(1,len(terms|item["terms"]))
         # ISO string, not datetime: suggestions are embedded in the answer's debug_data JSON column, which cannot serialize datetimes.
-        if score>=.28:found.append({"answer_id":answer.id,"question":previous.text,"answer":answer.text,"customer":customer.name,"collections":answer.collections or [],"category":answer.category,"approved_at":answer.approved_at.isoformat() if answer.approved_at else None,"reviewer":answer.reviewer or "Reviewer","evidence":answer.sources,"evidence_status":"Current" if evidence_current else "Needs Review – evidence changed or unavailable","evidence_current":evidence_current,"match_badge":"Global Approved Answer" if answer.global_approved else "Shared Collection Match","golden":answer.golden,"global_approved":answer.global_approved,"similarity":round(score,2)})
+        if score>=.28:found.append({"answer_id":answer.id,"question":item["question_text"],"answer":answer.text,"customer":item["customer_name"],"collections":answer.collections or [],"category":answer.category,"approved_at":answer.approved_at.isoformat() if answer.approved_at else None,"reviewer":answer.reviewer or "Reviewer","evidence":answer.sources,"evidence_status":"Current" if item["evidence_current"] else "Needs Review – evidence changed or unavailable","evidence_current":item["evidence_current"],"match_badge":"Global Approved Answer" if answer.global_approved else "Shared Collection Match","golden":answer.golden,"global_approved":answer.global_approved,"similarity":round(score,2)})
     return sorted(found,key=lambda x:(x["golden"],x["similarity"]),reverse=True)[:limit]
+def approved_suggestions(db,question,cid,collections=None,category=None,exclude_answer_id=None,limit=3):
+    return suggestions_from_pool(suggestion_pool(db,cid),question,cid,collections,category,exclude_answer_id,limit)
 # Authority tiers 1-9: lower is more authoritative. 1-2 are reserved for Golden/Approved answers; documents start at 3.
 CATEGORY_AUTHORITY={"Products":3,"Security":4,"Previous Questionnaires":5,"Company":6,"Support":7,"Operations":7,"Compliance":8,"Legal":8,"Marketing":9}
 DEFAULT_AUTHORITY=6
