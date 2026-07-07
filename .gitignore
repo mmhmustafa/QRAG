@@ -13,3 +13,6 @@ data/pytest-run2/
 pytest-cache-files-*/
 *.tsbuildinfo
 deliverables/
+*.db-journal
+*.db-wal
+*.db-shm
