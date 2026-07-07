@@ -50,6 +50,20 @@ Go to **Settings**:
 
 Keys are stored locally and never shown again in the interface.
 
+#### Using your local enterprise LLM
+
+If your organization runs its own LLM gateway (any OpenAI-compatible endpoint), configure it like this:
+
+1. Set **AI Provider** to `enterprise`. An extra **Local / Custom Enterprise Provider** section appears.
+2. Enter your gateway's **AI Base URL** (e.g. `https://llm.company.local/v1`) — required, there is no default.
+3. Enter the **Chat Model** name exactly as your gateway expects it (no model discovery is needed).
+4. If your gateway requires a token, paste it as the AI API Key — it is sent as `Authorization: Bearer <token>`. If it requires extra headers (organization IDs, routing), add them as **Custom Headers (JSON)**, e.g. `{"X-Org": "prod"}` — they are sent on every chat and embedding request.
+5. For embeddings, set **Embedding Provider** to `custom` with your gateway's embedding base URL and model, or keep a separate embedding provider — chat and embeddings are configured independently.
+6. If your gateway does not use OpenAI's response format, switch **OpenAI-compatible mode** off; common `response`/`output`/`text` envelopes are then accepted. The endpoint paths (default `/chat/completions` and `/embeddings`) are also adjustable.
+7. Click **Test AI Connection** and **Test Embedding Connection** before saving — both must show Connected.
+
+Everything stays inside your network: with an enterprise gateway configured, the application makes no external calls at all. Question extraction from uploaded questionnaires is deterministic and never calls the LLM.
+
 ### c. Upload your knowledge documents
 Go to **Knowledge base**:
 1. Set the **Category** before uploading — it matters: Products and Security documents outrank Company or Marketing material when evidence conflicts.
