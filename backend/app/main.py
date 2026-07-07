@@ -147,8 +147,18 @@ def delete_customer(cid:int,db:Session=Depends(get_db)):
 @app.get("/api/customers/{cid}/dashboard")
 def dashboard(cid:int,db:Session=Depends(get_db)):
     customer_or_404(db,cid);cfg=db.scalar(select(ProviderConfig).where(ProviderConfig.customer_id==cid));activity=list(db.scalars(select(AuditLog).where(AuditLog.customer_id==cid).order_by(AuditLog.id.desc()).limit(8)))
+    def activity_href(entry):
+        # Frontend route for the entity so activity rows are clickable, not dead text.
+        if entry.entity_type=="questionnaire" and entry.entity_id:return f"/questionnaires/{entry.entity_id}"
+        if entry.entity_type=="document":return "/knowledge"
+        if entry.entity_type=="settings":return "/settings"
+        if entry.entity_type=="customer":return "/customers"
+        if entry.entity_type=="answer" and entry.entity_id:
+            qid=db.scalar(select(Question.questionnaire_id).join(Answer,Answer.question_id==Question.id).where(Answer.id==entry.entity_id))
+            return f"/questionnaires/{qid}" if qid else None
+        return None
     total=db.scalar(select(func.count(Answer.id)).where(Answer.customer_id==cid)) or 0;approved=db.scalar(select(func.count(Answer.id)).where(Answer.customer_id==cid,Answer.status=="approved")) or 0;golden=db.scalar(select(func.count(Answer.id)).where(Answer.customer_id==cid,Answer.golden==True)) or 0;reused=db.scalar(select(func.count(Answer.id)).where(Answer.customer_id==cid,Answer.reused_from_answer_id.is_not(None))) or 0;manual=db.scalar(select(func.count(Answer.id)).where(Answer.customer_id==cid,Answer.status=="manual_review")) or 0;avg=db.scalar(select(func.avg(Answer.confidence)).where(Answer.customer_id==cid)) or 0;review_seconds=db.scalar(select(func.avg(Answer.review_duration_seconds)).where(Answer.customer_id==cid,Answer.review_duration_seconds>0)) or 0
-    return {"customers":db.scalar(select(func.count(Customer.id)).where(Customer.archived==False)),"documents":db.scalar(select(func.count(Document.id)).where(Document.customer_id==cid)),"questionnaires":db.scalar(select(func.count(Questionnaire.id)).where(Questionnaire.customer_id==cid)),"llm_provider":cfg.llm_provider,"embedding_provider":cfg.embedding_provider,"questions_generated":total,"questions_approved":approved,"golden_answers":golden,"answers_reused":reused,"manual_reviews":manual,"average_confidence":round(float(avg),2),"average_review_seconds":round(float(review_seconds)),"estimated_minutes_saved":reused*3+approved,"recent_activity":[{"id":x.id,"action":x.action,"details":x.details,"created_at":x.created_at} for x in activity]}
+    return {"customers":db.scalar(select(func.count(Customer.id)).where(Customer.archived==False)),"documents":db.scalar(select(func.count(Document.id)).where(Document.customer_id==cid)),"questionnaires":db.scalar(select(func.count(Questionnaire.id)).where(Questionnaire.customer_id==cid)),"llm_provider":cfg.llm_provider,"embedding_provider":cfg.embedding_provider,"questions_generated":total,"questions_approved":approved,"golden_answers":golden,"answers_reused":reused,"manual_reviews":manual,"average_confidence":round(float(avg),2),"average_review_seconds":round(float(review_seconds)),"estimated_minutes_saved":reused*3+approved,"recent_activity":[{"id":x.id,"action":x.action,"details":x.details,"created_at":x.created_at,"href":activity_href(x)} for x in activity]}
 
 CATEGORIES={"Company","Products","Security","Compliance","Legal","Support","Operations","Previous Questionnaires"}
 ALLOWED_EXTENSIONS={".pdf",".docx",".xlsx",".csv",".txt"}

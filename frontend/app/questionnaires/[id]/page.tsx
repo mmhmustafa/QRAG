@@ -540,21 +540,24 @@ export default function Review({
           )}
         </div>
       )}
-      {!tracking && progress?.state === "cancelled" && answered < total && (
-        <div className="notice warning-notice">
-          <strong>
-            Generation was cancelled — {answered} of {total} questions have
-            answers.
-          </strong>{" "}
-          <button
-            className="mini"
-            disabled={generating}
-            onClick={() => generate(true)}
-          >
-            Resume remaining questions
-          </button>
-        </div>
-      )}
+      {!tracking &&
+        answered < total &&
+        (progress?.state === "cancelled" ||
+          (!progress && item.status === "generating")) && (
+          <div className="notice warning-notice">
+            <strong>
+              Generation was {progress ? "cancelled" : "interrupted"} —{" "}
+              {answered} of {total} questions have answers.
+            </strong>{" "}
+            <button
+              className="mini"
+              disabled={generating}
+              onClick={() => generate(true)}
+            >
+              Resume remaining questions
+            </button>
+          </div>
+        )}
       {!tracking &&
         progress?.failed_count > 0 &&
         ["completed", "cancelled"].includes(progress?.state) && (

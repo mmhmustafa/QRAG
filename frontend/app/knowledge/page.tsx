@@ -1,5 +1,6 @@
 "use client";
 import { DragEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { API, get, send, upload } from "../../lib/api";
 import { formatError } from "../../lib/errors";
 import { useCustomer } from "../../components/CustomerContext";
@@ -423,7 +424,13 @@ export default function Knowledge() {
             <div className="document-record" key={d.id}>
               <div className="data-row document-row">
                 <div>
-                  <strong>{d.name}</strong>
+                  <Link
+                    className="row-link"
+                    href={`/documents/${d.id}`}
+                    title="Open in source viewer"
+                  >
+                    <strong>{d.name}</strong>
+                  </Link>
                   <div className="label">
                     {d.chunk_count} chunks
                     {d.collections?.length ? ` · ${d.collections.join(", ")}` : ""}

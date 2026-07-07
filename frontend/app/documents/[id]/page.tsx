@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { API, get } from "../../../lib/api";
 import { formatError } from "../../../lib/errors";
@@ -41,7 +42,7 @@ export default function DocumentViewer({
       doc.text.slice(position + needle.length)
     );
   }, [doc, query]);
-  if(error)return <div className="notice error-notice">{error}</div>;
+  if(error)return <><div className="notice error-notice">{error}</div><Link className="button secondary" href="/knowledge">← Back to Knowledge base</Link></>;
   if (!doc)
     return (
       <div className="loading">
@@ -54,16 +55,24 @@ export default function DocumentViewer({
     <>
       <div className="pagehead">
         <div>
-          <div className="eyebrow">Source Viewer · {doc.category}</div>
+          <div className="eyebrow">
+            <Link href="/knowledge">Knowledge base</Link> · Source Viewer ·{" "}
+            {doc.category}
+          </div>
           <h1>{doc.name}</h1>
           <p className="sub">
             Chunk #{doc.chunk?.id || "—"} · Page{" "}
             {doc.chunk?.page_number || "Unknown"}
           </p>
         </div>
-        <a className="button secondary" href={download}>
-          Download original
-        </a>
+        <div className="actions">
+          <Link className="button secondary" href="/knowledge">
+            ← Back to Knowledge base
+          </Link>
+          <a className="button secondary" href={download}>
+            Download original
+          </a>
+        </div>
       </div>
       <div className="viewer-toolbar">
         <input
