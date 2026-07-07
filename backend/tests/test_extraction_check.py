@@ -17,3 +17,4 @@ def test_build_questionnaire_reports_detected_count(tmp_path):
     item=build_questionnaire(db,source,"q.txt",customer.id,["General"])
     assert len(item.questions)==2
     assert item.detected_question_count==2
+

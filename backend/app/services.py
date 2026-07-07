@@ -35,6 +35,9 @@ def parse_file(path:Path)->str:
 def parse_pages(path:Path):
     if path.suffix.lower()==".pdf":return [(index+1,page.extract_text() or "") for index,page in enumerate(PdfReader(path).pages)]
     return [(None,parse_file(path))]
+# NOTE: stripping repeated page headers before chunking was evaluated (scripts/evaluate_retrieval.py)
+# and REJECTED: hit@1 dropped 0.90 -> 0.80 with no score gain — headers carry anchoring signal for the
+# embedding model. Re-measure before reintroducing any chunk-cleaning idea.
 def chunks(text,size=900,overlap=120):
     clean=re.sub(r"\s+"," ",text).strip();out=[];start=0
     while start<len(clean):
