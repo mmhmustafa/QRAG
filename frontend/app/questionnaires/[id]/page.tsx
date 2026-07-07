@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { API, get, send } from "../../../lib/api";
 import { formatError } from "../../../lib/errors";
 import { useCustomer } from "../../../components/CustomerContext";
@@ -35,6 +35,7 @@ export default function Review({
 }) {
   const { customer } = useCustomer();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [item, setItem] = useState<any>(),
     [id, setId] = useState(""),
     [query, setQuery] = useState(""),
@@ -97,11 +98,20 @@ export default function Review({
       `/api/customers/${customer.id}/questionnaires/${qid}${searchParams.get("debug") === "1" ? "?debug=1" : ""}`,
     )
       .then(setItem)
-      .catch((error) => flash(formatError(error), "error"));
+      .catch((error) => {
+        // The questionnaire in the URL belongs to another customer (e.g. the workspace was switched mid-review);
+        // land on the active customer's questionnaire list instead of surfacing a 404 over stale content.
+        if (String(error?.message || "").includes("API endpoint not found"))
+          return router.replace("/questionnaires");
+        flash(formatError(error), "error");
+      });
   useEffect(() => {
     if (customer)
       params.then(async (p) => {
         setId(p.id);
+        setItem(undefined);
+        setProgress(undefined);
+        setTracking(false);
         void load(p.id);
         try {
           const running = await get(

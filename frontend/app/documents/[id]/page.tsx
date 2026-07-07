@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { API, get } from "../../../lib/api";
 import { formatError } from "../../../lib/errors";
 import { useCustomer } from "../../../components/CustomerContext";
@@ -12,6 +12,7 @@ export default function DocumentViewer({
 }) {
   const { customer } = useCustomer();
   const search = useSearchParams();
+  const router = useRouter();
   const [doc, setDoc] = useState<any>(),
     [id, setId] = useState(""),
     [query, setQuery] = useState(""),
@@ -21,9 +22,14 @@ export default function DocumentViewer({
     if (customer)
       params.then((p) => {
         setId(p.id);
+        setDoc(undefined);
         get(
           `/api/customers/${customer.id}/documents/${p.id}/preview${chunkId ? `?chunk_id=${chunkId}` : ""}`,
-        ).then(setDoc).catch(value=>setError(formatError(value)));
+        ).then(setDoc).catch(value=>{
+          // Document belongs to another customer after a workspace switch; go to the active customer's knowledge base.
+          if(String((value as any)?.message||"").includes("API endpoint not found"))return void router.replace("/knowledge");
+          setError(formatError(value));
+        });
       });
   }, [customer, params, chunkId]);
   const displayed = useMemo(() => {
