@@ -1,0 +1,6 @@
+Acme Cloud encrypts customer data in transit using TLS 1.2 or higher and at rest using AES-256. Production access is restricted by least privilege and reviewed quarterly. Backups are encrypted and tested every quarter.
+
+Acme Cloud provides email support Monday through Friday, 09:00–17:00 UTC. Enterprise customers receive 24/7 support for severity-one incidents with a one-hour initial response target.
+
+Acme Cloud retains customer data for the duration of the agreement. On verified termination requests, customer data is deleted from active systems within 30 days and ages out of encrypted backups within 90 days.
+

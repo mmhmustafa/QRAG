@@ -1,0 +1,4 @@
+import './globals.css';import './upload.css';import './polish.css';import './reviewer.css';
+import Link from 'next/link';import {CustomerProvider} from '../components/CustomerContext';import CustomerSwitch from '../components/CustomerSwitch';
+export const metadata={title:'Customer Questionnaire Assistant',description:'Grounded questionnaire answers from approved knowledge'};
+export default function Layout({children}:{children:React.ReactNode}){return <html lang="en"><body><CustomerProvider><div className="shell"><aside className="side"><div className="logo"><span>◈</span> Customer<br/>Questionnaire Assistant</div><CustomerSwitch/><nav className="nav"><Link href="/">Dashboard</Link><Link href="/customers">Customers</Link><Link href="/knowledge">Knowledge base</Link><Link href="/questionnaires">Questionnaires</Link><Link href="/settings">Settings</Link></nav></aside><main className="main">{children}</main></div></CustomerProvider></body></html>}

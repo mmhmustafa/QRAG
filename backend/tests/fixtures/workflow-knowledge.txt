@@ -1,0 +1,1 @@
+Data is encrypted at rest with AES-256. Enterprise support is available 24/7.

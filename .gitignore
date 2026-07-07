@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.next/
+.next-preview/
+data/uploads/*
+!data/uploads/.gitkeep
+data/pytest-run2/
+*.db
+.pytest_cache/
+pytest-cache-files-*/
+*.tsbuildinfo
+deliverables/

@@ -1,0 +1,5 @@
+'use client';import {createContext,useContext,useEffect,useState} from 'react';import {get} from '../lib/api';
+type Customer={id:number;name:string;archived:boolean;description?:string};type Value={customers:Customer[];customer:Customer|null;setCustomer:(x:Customer)=>void;reload:()=>void};
+const Context=createContext<Value>({customers:[],customer:null,setCustomer:()=>{},reload:()=>{}});
+export function CustomerProvider({children}:{children:React.ReactNode}){const [customers,setCustomers]=useState<Customer[]>([]),[customer,setCurrent]=useState<Customer|null>(null);const reload=()=>{get('/api/customers').then((all:Customer[])=>{setCustomers(all);const saved=Number(localStorage.getItem('customerId'));const chosen=all.find(x=>x.id===saved&&!x.archived)||all.find(x=>!x.archived)||all[0]||null;setCurrent(chosen)}).catch(()=>{})};useEffect(()=>{void reload()},[]);function setCustomer(x:Customer){localStorage.setItem('customerId',String(x.id));setCurrent(x)}return <Context.Provider value={{customers,customer,setCustomer,reload}}>{children}</Context.Provider>}
+export const useCustomer=()=>useContext(Context);

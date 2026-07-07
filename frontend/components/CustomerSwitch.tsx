@@ -1,0 +1,2 @@
+'use client';import {useCustomer} from './CustomerContext';
+export default function CustomerSwitch(){const {customers,customer,setCustomer}=useCustomer();return <div className="switch"><div className="label">Active customer</div><select value={customer?.id||''} onChange={e=>{const x=customers.find(c=>c.id===Number(e.target.value));if(x)setCustomer(x)}}>{customers.filter(x=>!x.archived).map(x=><option value={x.id} key={x.id}>{x.name}</option>)}</select></div>}
