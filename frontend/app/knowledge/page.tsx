@@ -422,6 +422,11 @@ export default function Knowledge() {
               >
                 Clear list
               </button>
+              {success > 0 && !uploading && ready === 0 && (
+                <Link className="button" href="/questionnaires">
+                  Next: Upload a questionnaire →
+                </Link>
+              )}
             </div>
           </div>
         )}
