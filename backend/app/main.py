@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session,selectinload
 from .config import settings
 from .db import Base,engine,get_db,SessionLocal
 from .models import Customer,Document,DocumentChunk,Questionnaire,Question,Answer,AnswerVersion,ProviderConfig,GlobalProviderConfig,AuditLog
-from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents
+from .services import ingest,build_questionnaire,export_xlsx,index_document,generate_questionnaire,generate_one,config_for,retrieve,parse_file,approved_suggestions,CATEGORY_AUTHORITY,authority_for,start_generation,generation_progress,request_generation_cancel,GENERATION_STAGES,delete_all_documents,backup_sqlite_database
 from .providers import get_llm,get_embeddings
 
 Base.metadata.create_all(engine)
@@ -100,7 +100,7 @@ def migrate_legacy_sqlite():
             customer_cfg=db.scalar(select(ProviderConfig).where(ProviderConfig.customer_id==doc.customer_id));doc.settings_source="customer_override" if customer_cfg and customer_cfg.is_override else "global_default"
             if cfg and (doc.embedding_provider!=cfg.embedding_provider or doc.embedding_model!=cfg.embedding_model or not doc.embedding_dimension):doc.status="uploaded";doc.error_message="Embedding settings differ from stored vectors; re-index required"
         db.commit()
-migrate_legacy_sqlite();settings.upload_dir.mkdir(parents=True,exist_ok=True)
+backup_sqlite_database();migrate_legacy_sqlite();settings.upload_dir.mkdir(parents=True,exist_ok=True)
 app=FastAPI(title="Customer Questionnaire Assistant",version="0.2.0")
 app.add_middleware(CORSMiddleware,allow_origins=settings.cors_origins.split(","),allow_methods=["*"],allow_headers=["*"])
 

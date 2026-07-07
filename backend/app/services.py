@@ -1,6 +1,7 @@
-import io, math, re, logging, hashlib, threading, time
+import io, math, re, logging, hashlib, shutil, threading, time
 from datetime import datetime, timezone
 from pathlib import Path
+from .config import settings
 from pypdf import PdfReader
 from docx import Document as WordDocument
 from openpyxl import load_workbook, Workbook
@@ -11,6 +12,18 @@ from .providers import get_embeddings,get_llm,MANUAL
 logger=logging.getLogger("questionnaire.rag")
 logger.setLevel(logging.INFO)
 def now():return datetime.now(timezone.utc).replace(tzinfo=None)
+BACKUPS_TO_KEEP=10
+def backup_sqlite_database(database_url=None,keep=BACKUPS_TO_KEEP):
+    """Rolling snapshot of the local database; it holds all approved answers, so every backend start backs it up."""
+    url=database_url or settings.database_url
+    if not url.startswith("sqlite"):return None
+    db_path=Path(url.split("///")[-1])
+    if not db_path.exists():return None
+    folder=db_path.parent/"backups";folder.mkdir(exist_ok=True)
+    target=folder/f"{db_path.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}{db_path.suffix}"
+    shutil.copy2(db_path,target)
+    for old in sorted(folder.glob(f"{db_path.stem}-*{db_path.suffix}"))[:-keep]:old.unlink()
+    logger.info("database_backup path=%s",target);return target
 def clean_customer_answer(text,context):
     clean=text.strip()
     # Customer-ready answers are plain prose; strip markdown syntax that models emit despite instructions.

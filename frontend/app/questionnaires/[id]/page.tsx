@@ -52,7 +52,9 @@ export default function Review({
     [focus, setFocus] = useState(false),
     [focusIdx, setFocusIdx] = useState(0),
     [progress, setProgress] = useState<any>(),
-    [tracking, setTracking] = useState(false);
+    [tracking, setTracking] = useState(false),
+    [renderCount, setRenderCount] = useState(60);
+  const sentinel = useRef<HTMLDivElement>(null);
   const flash = (message: string, kind: "success" | "error" = "success") => {
     setNotice(message);
     setNoticeKind(kind);
@@ -65,6 +67,20 @@ export default function Review({
     );
     return () => clearTimeout(timer);
   }, [notice, noticeKind]);
+  useEffect(() => setRenderCount(60), [statusFilter, query, id]);
+  useEffect(() => {
+    // Large questionnaires render incrementally: ~60 cards in the DOM, more as the sentinel scrolls into view.
+    const el = sentinel.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) setRenderCount((c) => c + 60);
+      },
+      { rootMargin: "900px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [item, focus, statusFilter, query, renderCount]);
   useEffect(() => {
     // Dropdown menus are <details>; close any open one when clicking elsewhere.
     const close = (e: MouseEvent) => {
@@ -390,12 +406,17 @@ export default function Review({
       }
       setFocus(false);
     }
+    // The target card may be beyond the incremental-render window; extend it before scrolling.
+    const position = item.questions
+      .filter((x: any) => x.ordinal <= q.ordinal)
+      .length;
+    setRenderCount((c) => Math.max(c, position + 20));
     setTimeout(
       () =>
         document
           .getElementById(`q-card-${q.id}`)
           ?.scrollIntoView({ behavior: "smooth", block: "start" }),
-      80,
+      160,
     );
   }
   function jumpClass(q: any) {
@@ -796,7 +817,12 @@ export default function Review({
           {statusFilter !== "all" || query ? " (filtered)" : ""}
         </div>
       )}
-      {(focus ? (focusCard ? [focusCard] : []) : visible).map((q: any) => (
+      {(focus
+        ? focusCard
+          ? [focusCard]
+          : []
+        : visible.slice(0, renderCount)
+      ).map((q: any) => (
         <AnswerCard
           key={q.id}
           q={q}
@@ -833,6 +859,12 @@ export default function Review({
           showDebug={searchParams.get("debug") === "1"}
         />
       ))}
+      {!focus && visible.length > renderCount && (
+        <div ref={sentinel} className="loading">
+          <span className="spinner" />
+          Loading more questions… ({renderCount} of {visible.length} rendered)
+        </div>
+      )}
     </>
   );
 }

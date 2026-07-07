@@ -1,6 +1,16 @@
 # Customer Questionnaire Assistant
 
+[![CI](https://github.com/mmhmustafa/QRAG/actions/workflows/ci.yml/badge.svg)](https://github.com/mmhmustafa/QRAG/actions/workflows/ci.yml)
+
 A multi-customer, mock-first, provider-independent RAG application that drafts customer questionnaire answers only from approved internal documents. Every answer includes confidence and source references; missing evidence becomes **Manual Review Required**.
+
+## Run in production mode (local single-user)
+
+```powershell
+.\start-production.cmd
+```
+
+Builds the frontend once and starts both servers without dev reload (backend on 8000, frontend on 3000). On every backend start a rolling snapshot of the SQLite database is written to `backups\` next to `questionnaire.db` (the last 10 are kept). The database contains all approved answers — to restore, stop the backend and copy a snapshot back over `questionnaire.db`.
 
 ## Architecture
 
@@ -90,7 +100,7 @@ Documents carry an authority tier derived from their category (Product 3, Securi
 
 ### Retrieval quality evaluation
 
-Run `python backend/scripts/evaluate_retrieval.py --customer mednova` with `PYTHONPATH=backend`. The script prints expected and retrieved documents, similarity/relevance scores, and pass/fail results for known and unsupported questions. Ranking combines semantic similarity with bounded terminology/title relevance and returns document-diverse evidence. The current MedNova acceptance run passes 5/5 known-source cases and 4/4 unsupported manual-review cases.
+Run `python backend/scripts/evaluate_retrieval.py --customer mednova` (the script bootstraps its own import path; `DATABASE_URL` selects the database). It measures hit@1 / hit@3 / hit@5 and MRR over 40 labeled questionnaire-style questions, verifies that unsupported questions stay below the reliability threshold, and `--variants` re-ranks with alternative scoring weights using cached query embeddings. Measure before changing retrieval: the harness has already rejected one plausible-looking chunking change that degraded hit@1. Baseline on the MedNova corpus: hit@1 0.90, hit@3 1.00, MRR 0.95, guard 4/4.
 
 The provider prompt/implementation must preserve these invariants: use retrieved context only, never invent facts, return `Manual review required` when evidence is insufficient, cite source documents, stay concise, and prefer approved responses.
 
