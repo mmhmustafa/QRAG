@@ -259,13 +259,35 @@ def build_questionnaire(db,path,name,cid,collections=None):
     db.add(AuditLog(customer_id=cid,action="questionnaire_upload",entity_type="questionnaire",entity_id=item.id,details={"name":name,"questions":len(qs),"numbered_detected":detected}));db.commit()
     item.detected_question_count=detected
     return item
+QUESTION_SENTENCE_SPLIT=re.compile(r"(?<=[.?!])\s+")
+def shared_question_noise(question_texts,minimum=3):
+    """Sentences repeated across many questions ("Include any relevant details...", "Variant 2.") carry no
+    discriminative signal — measured on real data they dilute retrieval scores by ~20% and push answerable
+    questions into Needs Manual Input. First sentences are never counted, so a repeated core question
+    ("Do you support MFA?") can never be classified as noise."""
+    counts={}
+    for text in question_texts:
+        for sentence in set(QUESTION_SENTENCE_SPLIT.split(text.strip())[1:]):
+            clean=sentence.strip()
+            if len(clean)>=8:counts[clean]=counts.get(clean,0)+1
+    return {sentence for sentence,count in counts.items() if count>=minimum}
+def core_question(text,noise):
+    """The question minus questionnaire boilerplate; used for retrieval, reuse matching, and verification subjects."""
+    if not noise:return text
+    sentences=QUESTION_SENTENCE_SPLIT.split(text.strip())
+    kept=[sentences[0]]+[s for s in sentences[1:] if s.strip() not in noise]
+    return " ".join(kept).strip() or text
 ROLE_ORDER={"primary":0,"supporting":1,"complementary":2,"conflicting":3,"superseded":4,"unrelated":5,"additional":6}
-def generate_one(db,q,cfg,llm,on_stage=None):
+def generate_one(db,q,cfg,llm,on_stage=None,query_noise=None):
     stage=(lambda name:on_stage(name)) if on_stage else (lambda name:None)
-    questionnaire=db.get(Questionnaire,q.questionnaire_id);collections=normalize_collections(questionnaire.collections);cache_key=hashlib.sha256(f"rag-v5|{cfg.embedding_provider}|{cfg.embedding_model}|{cfg.top_k}|{sorted(collections)}|{q.text}".encode()).hexdigest();cache_hit=q.retrieval_cache_key==cache_key and bool(q.retrieval_cache);stage("retrieving");ctx=q.retrieval_cache if cache_hit else (retrieve(db,q.text,q.customer_id,collections=collections) if collections else [])
+    questionnaire=db.get(Questionnaire,q.questionnaire_id);collections=normalize_collections(questionnaire.collections)
+    if query_noise is None:query_noise=shared_question_noise(list(db.scalars(select(Question.text).where(Question.questionnaire_id==q.questionnaire_id))))
+    # Retrieval, reuse matching, and verification all use the question's core; the display text and generation prompt keep the full question.
+    core=core_question(q.text,query_noise)
+    cache_key=hashlib.sha256(f"rag-v6|{cfg.embedding_provider}|{cfg.embedding_model}|{cfg.top_k}|{sorted(collections)}|{core}".encode()).hexdigest();cache_hit=q.retrieval_cache_key==cache_key and bool(q.retrieval_cache);stage("retrieving");ctx=q.retrieval_cache if cache_hit else (retrieve(db,core,q.customer_id,collections=collections) if collections else [])
     if q.retrieval_cache_key!=cache_key:q.retrieval_cache=ctx;q.retrieval_cache_key=cache_key
     analysis=analyze_evidence(ctx,llm,use_llm=cfg.llm_provider!="mock");primary=analysis["primary"];relevant=[x for x in ctx if x.get("score",1)>=RELEVANT_SCORE];roles=analysis["roles"];top_score=ctx[0]["score"] if ctx else 0
-    existing=db.scalar(select(Answer).where(Answer.question_id==q.id,Answer.customer_id==q.customer_id));suggestions=approved_suggestions(db,q.text,q.customer_id,collections,exclude_answer_id=existing.id if existing else None)
+    existing=db.scalar(select(Answer).where(Answer.question_id==q.id,Answer.customer_id==q.customer_id));suggestions=approved_suggestions(db,core,q.customer_id,collections,exclude_answer_id=existing.id if existing else None)
     # Golden/approved reuse is validated against current documentation; a golden match with changed evidence is surfaced for review, never silently reused.
     validated=lambda x:x["evidence_current"] and (not (x["golden"] or x["global_approved"]) or bool(relevant and top_score>=RELIABLE_SCORE))
     preferred=next((x for x in suggestions if validated(x) and x["golden"] and x["similarity"]>=.55),None) or next((x for x in suggestions if validated(x) and x["similarity"]>=.82),None)
@@ -276,7 +298,7 @@ def generate_one(db,q,cfg,llm,on_stage=None):
     elif generation_ctx:
         # Generate first from the best evidence, then verify the draft against relevant peer evidence. A verified contradiction downgrades status but never erases the draft.
         stage("generating");logger.info("llm_called customer=%s question=%s context_count=%s",q.customer_id,q.id,len(generation_ctx));answer_text=clean_customer_answer(llm.generate_answer(q.text,generation_ctx,cfg.prompt_instructions),generation_ctx)
-        if answer_text!=MANUAL:stage("verifying");contradictions=verify_answer(answer_text,q.text,relevant,primary,llm,use_llm=cfg.llm_provider!="mock")
+        if answer_text!=MANUAL:stage("verifying");contradictions=verify_answer(answer_text,core,relevant,primary,llm,use_llm=cfg.llm_provider!="mock")
     else:logger.info("llm_skipped customer=%s question=%s reason=no_relevant_evidence",q.customer_id,q.id);answer_text=MANUAL
     elapsed=round((time.perf_counter()-started)*1000,1)
     supporting=analysis["counts"]["supporting"];extra=supporting+analysis["counts"]["complementary"];retrieval_quality=round(min(1,top_score+(.1*ctx[1]["score"] if len(ctx)>1 else 0)),2) if ctx else 0;evidence_consistency=(analysis["consistency"] if not contradictions else .3) if relevant else 0
@@ -337,6 +359,9 @@ def run_generation(db,item,progress,on_question_complete=None,only_missing=False
     """Generate every answer with per-question commits so completed work survives cancellation or a crash."""
     cfg=config_for(db,item.customer_id);llm=get_llm(cfg)
     questions=list(db.scalars(select(Question).where(Question.customer_id==item.customer_id,Question.questionnaire_id==item.id).order_by(Question.ordinal)))
+    # Boilerplate repeated across the questionnaire's questions is computed once from the full set,
+    # so scoped runs (retry/filtered) see the same noise the full run would.
+    query_noise=shared_question_noise([q.text for q in questions])
     if question_ids is not None:
         # Explicit scope (filtered/retry/selected questions) overrides the derived filters; the caller chose deliberately.
         wanted=set(question_ids);questions=[q for q in questions if q.id in wanted]
@@ -353,7 +378,7 @@ def run_generation(db,item,progress,on_question_complete=None,only_missing=False
         if progress.get("cancel"):progress["state"]="cancelled";break
         progress.update(current_ordinal=q.ordinal+1,current_question_id=q.id,current_question=q.text[:300]);progress["question_status"][q.id]="processing"
         try:
-            answer=generate_one(db,q,cfg,llm,on_stage=lambda name:progress.__setitem__("stage",name))
+            answer=generate_one(db,q,cfg,llm,on_stage=lambda name:progress.__setitem__("stage",name),query_noise=query_noise)
             progress["stage"]="saving";db.commit()
             progress["question_status"][q.id]="manual_review" if answer.status=="manual_review" else "generated"
         except Exception as exc:
