@@ -35,7 +35,10 @@ class MockLLMProvider(BaseLLMProvider):
         for x in lines:
             if x:counts[x]=counts.get(x,0)+1
         page_line=re.compile(r"^page \d+(?: of \d+)?$",re.I)
-        question_shaped=lambda x:len(x)>5 and (x.endswith("?") or bool(re.match(r"^(describe|explain|provide|list|detail|confirm|state|outline|specify|do |does |is |are |what |how |where |when |who |can |which )",x,re.I)))
+        # A trailing ':' marks a form-field prompt ("Company name:", "Regulatory requirements:") — the common
+        # questionnaire style with no '?' and no interrogative word; without it such forms extract nothing and
+        # fall back to dumping every line (title, instructions, headings) as bogus questions.
+        question_shaped=lambda x:len(x)>3 and (x.endswith("?") or x.endswith(":") or bool(re.match(r"^(describe|explain|provide|list|detail|confirm|state|outline|specify|do |does |is |are |what |how |where |when |who |can |which )",x,re.I)))
         found=[];current=None  # current=(text, explicitly Q-numbered)
         for line in lines:
             # Page headers/footers repeat verbatim across pages; wrapped continuations start lowercase and stay exempt.

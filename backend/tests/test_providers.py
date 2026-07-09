@@ -92,3 +92,21 @@ def test_enterprise_embedding_alias_matches_custom():
     cfg=lambda name:SimpleNamespace(embedding_provider=name)
     assert type(get_embeddings(cfg("enterprise")))is CustomEmbeddingProvider
     assert type(get_embeddings(cfg("custom")))is CustomEmbeddingProvider
+
+def test_question_extraction_form_field_labels():
+    """Form-style questionnaires use numbered field labels ending in ':' rather than '?' questions.
+    Regression: these extracted nothing, so build_questionnaire dumped every line (title, 'Instructions',
+    'Questions' heading) as bogus questions."""
+    text=(
+        "Medical Project Client Questionnaire\n"
+        "Instructions\n"
+        "Please complete the following before project kickoff.\n"
+        "Questions\n"
+        "1. Company name:\n2. Primary contact:\n3. Email:\n4. Phone:\n"
+        "8. Regulatory requirements (FDA, CE, HIPAA, GDPR, etc.):\n16. Additional comments:"
+    )
+    qs=MockLLMProvider().extract_questions(text)
+    assert qs==["Company name:","Primary contact:","Email:","Phone:","Regulatory requirements (FDA, CE, HIPAA, GDPR, etc.):","Additional comments:"]
+    assert "Medical Project Client Questionnaire" not in qs
+    assert "Instructions" not in qs and "Questions" not in qs
+    assert not any("Please complete" in q for q in qs)
