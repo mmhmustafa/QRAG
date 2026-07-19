@@ -9,3 +9,4 @@ python-docx==1.1.2
 openpyxl==3.1.5
 httpx==0.28.1
 fpdf2==2.8.7
+pip-system-certs==5.3

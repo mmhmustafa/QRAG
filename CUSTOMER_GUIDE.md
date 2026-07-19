@@ -134,6 +134,7 @@ The **Export ▾** menu offers the customer copy in two formats, both containing
 | Answers cite the wrong documents | Use **Test Retrieval** on the Knowledge base page to inspect what search returns; check documents are indexed and in the right collections |
 | Everything says Needs Manual Input | Usually the embedding model changed without re-indexing, or the questionnaire's collections don't match the documents' collections |
 | Page shows an API error | Confirm the backend window is still running; restart via `start-production.cmd` |
+| Test AI/Embedding Connection fails with `CERTIFICATE_VERIFY_FAILED` | Your network's security appliance (Zscaler, Netskope, Fortinet, or similar) is inspecting HTTPS traffic. This is already handled automatically by the installed dependencies — if it still occurs, run `pip install pip-system-certs` inside the app's Python environment and restart the backend |
 
 ## 7. Security notes
 
